@@ -5,7 +5,7 @@ async function scrapeLinkedInPost(postUrl) {
         headless: true,
         defaultViewport: null,
         args: [
-            "--start-maximized"
+            "--start-maximized",'--disable-setuid-sandbox','--headless=old'
         ]
     });
 
