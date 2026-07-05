@@ -2,7 +2,7 @@ const puppeteer = require("puppeteer");
 
 async function scrapeLinkedInPost(postUrl) {
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         defaultViewport: null,
         args: [
             "--start-maximized"
@@ -92,7 +92,7 @@ async function scrapeLinkedInPost(postUrl) {
 
 async function scrapeLinkedInJob(jobUrl) {
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         defaultViewport: null,
         args: ["--start-maximized"]
     });
