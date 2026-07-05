@@ -5,7 +5,16 @@ async function scrapeLinkedInPost(postUrl) {
         headless: true,
         defaultViewport: null,
         args: [
-            "--start-maximized",'--disable-setuid-sandbox','--headless=old'
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--mute-audio"
         ]
     });
 
@@ -94,7 +103,18 @@ async function scrapeLinkedInJob(jobUrl) {
     const browser = await puppeteer.launch({
         headless: true,
         defaultViewport: null,
-        args: ["--start-maximized"]
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--mute-audio"
+        ]
     });
 
     const page = await browser.newPage();
