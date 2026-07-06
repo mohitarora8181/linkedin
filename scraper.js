@@ -1,220 +1,319 @@
 const puppeteer = require("puppeteer");
 
-async function scrapeLinkedInPost(postUrl) {
-    const browser = await puppeteer.launch({
+const USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
+
+const VIEWPORT = {
+    width: 1366,
+    height: 768,
+    deviceScaleFactor: 1
+};
+
+const NAVIGATION_TIMEOUT_MS = 60000;
+const SELECTOR_TIMEOUT_MS = 30000;
+
+const BLOCKED_RESOURCE_TYPES = new Set(["image", "font", "media"]);
+
+let browser = null;
+let browserPromise = null;
+let shutdownHandlersInstalled = false;
+
+function logInfo(message, meta = {}) {
+    console.log(`[scraper] ${message}`, meta);
+}
+
+function logError(message, error, meta = {}) {
+    console.error(`[scraper] ${message}`, {
+        ...meta,
+        message: error?.message,
+        stack: error?.stack
+    });
+}
+
+function installShutdownHandlers() {
+    if (shutdownHandlersInstalled) return;
+
+    const shutdown = async signal => {
+        try {
+            logInfo(`received ${signal}; closing browser`);
+            await closeBrowser();
+        } catch (error) {
+            logError("failed to close browser during shutdown", error, { signal });
+        } finally {
+            process.exit(0);
+        }
+    };
+
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+    shutdownHandlersInstalled = true;
+}
+
+async function launchBrowser() {
+    installShutdownHandlers();
+
+    const launchedBrowser = await puppeteer.launch({
         headless: true,
-        defaultViewport: null,
+        defaultViewport: VIEWPORT,
+        protocolTimeout: NAVIGATION_TIMEOUT_MS,
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
-            "--disable-gpu",
             "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
             "--mute-audio"
         ]
     });
 
-    const page = await browser.newPage();
-
-    await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-    );
-
-    await page.goto(postUrl, {
-        waitUntil: "networkidle2",
-        timeout: 60000
+    launchedBrowser.once("disconnected", () => {
+        browser = null;
+        browserPromise = null;
     });
 
-    await page.waitForSelector(
-        "[data-test-id='main-feed-activity-card__commentary']",
-        {
-            timeout: 30000
+    return launchedBrowser;
+}
+
+async function getBrowser() {
+    if (browser?.isConnected()) {
+        return browser;
+    }
+
+    if (!browserPromise) {
+        browserPromise = launchBrowser()
+            .then(launchedBrowser => {
+                browser = launchedBrowser;
+                return launchedBrowser;
+            })
+            .catch(error => {
+                browser = null;
+                browserPromise = null;
+                throw error;
+            });
+    }
+
+    return browserPromise;
+}
+
+async function closeBrowser() {
+    const activeBrowser = browser;
+
+    browser = null;
+    browserPromise = null;
+
+    if (activeBrowser?.isConnected()) {
+        await activeBrowser.close();
+    }
+}
+
+async function configurePage(page) {
+    page.setDefaultTimeout(SELECTOR_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+
+    await page.setUserAgent(USER_AGENT);
+    await page.setViewport(VIEWPORT);
+    await page.setRequestInterception(true);
+
+    const handleRequest = request => {
+        if (BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
+            request.abort();
+            return;
         }
-    );
 
-    const data = await page.evaluate(() => {
+        request.continue();
+    };
 
-        const $ = (selector, parent = document) => parent.querySelector(selector);
+    page.on("request", handleRequest);
 
-        const $$ = (selector, parent = document) =>
-            [...parent.querySelectorAll(selector)];
+    return handleRequest;
+}
 
-        const text = (selector, parent = document) =>
-            $(selector, parent)?.innerText.trim() ?? null;
+async function scrapeWithPage({ label, url, waitForSelector, evaluate }) {
+    const activeBrowser = await getBrowser();
+    const page = await activeBrowser.newPage();
+    let requestHandler = null;
 
-        const href = (selector, parent = document) =>
-            $(selector, parent)?.href ?? null;
+    try {
+        requestHandler = await configurePage(page);
 
-        const src = (selector, parent = document) =>
-            $(selector, parent)?.src ?? null;
+        await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: NAVIGATION_TIMEOUT_MS
+        });
 
-        return {
-            author: {
-                icon: src(
-                    "[data-test-id='main-feed-activity-card__entity-lockup'] img"
+        await page.waitForSelector(waitForSelector, {
+            timeout: SELECTOR_TIMEOUT_MS
+        });
+
+        return await page.evaluate(evaluate);
+    } catch (error) {
+        logError(`${label} scrape failed`, error, { url });
+        throw error;
+    } finally {
+        if (requestHandler) {
+            page.off("request", requestHandler);
+        }
+
+        try {
+            if (!page.isClosed()) {
+                await page.close();
+            }
+        } catch (error) {
+            logError("failed to close page", error, { label, url });
+        }
+    }
+}
+
+async function scrapeLinkedInPost(postUrl) {
+    return scrapeWithPage({
+        label: "LinkedIn post",
+        url: postUrl,
+        waitForSelector: "[data-test-id='main-feed-activity-card__commentary']",
+        evaluate: () => {
+
+            const $ = (selector, parent = document) => parent.querySelector(selector);
+
+            const $$ = (selector, parent = document) =>
+                [...parent.querySelectorAll(selector)];
+
+            const text = (selector, parent = document) =>
+                $(selector, parent)?.innerText.trim() ?? null;
+
+            const href = (selector, parent = document) =>
+                $(selector, parent)?.href ?? null;
+
+            const src = (selector, parent = document) =>
+                $(selector, parent)?.src ?? null;
+
+            return {
+                author: {
+                    icon: src(
+                        "[data-test-id='main-feed-activity-card__entity-lockup'] img"
+                    ),
+                    name: text(
+                        "[data-test-id='main-feed-activity-card__entity-lockup'] div a"
+                    ),
+                    href: href(
+                        "[data-test-id='main-feed-activity-card__entity-lockup'] div a"
+                    )?.split("?")[0]
+                },
+
+                content: text(
+                    "[data-test-id='main-feed-activity-card__commentary']"
                 ),
-                name: text(
-                    "[data-test-id='main-feed-activity-card__entity-lockup'] div a"
-                ),
-                href: href(
-                    "[data-test-id='main-feed-activity-card__entity-lockup'] div a"
-                )?.split("?")[0]
-            },
 
-            content: text(
-                "[data-test-id='main-feed-activity-card__commentary']"
-            ),
-
-            totalLikes: text(
-                "[data-test-id='social-actions__reaction-count']"
-            ),
-
-            mentions: $$(
-                "[data-test-id='main-feed-activity-card__commentary'] > a"
-            ).map(anchor => ({
-                url: anchor.href?.split("?")[0],
-                content: anchor.innerText.trim()
-            })),
-
-            comments: $$("section .comment").map(comment => ({
-                author: text(
-                    "[data-tracking-control-name='public_post_comment_actor-name']",
-                    comment
+                totalLikes: text(
+                    "[data-test-id='social-actions__reaction-count']"
                 ),
 
-                content: text("p", comment),
+                mentions: $$(
+                    "[data-test-id='main-feed-activity-card__commentary'] > a"
+                ).map(anchor => ({
+                    url: anchor.href?.split("?")[0],
+                    content: anchor.innerText.trim()
+                })),
 
-                url:
-                    href(".comment__header > a", comment)?.split("?")[0] ?? null
-            }))
-        };
+                comments: $$("section .comment").map(comment => ({
+                    author: text(
+                        "[data-tracking-control-name='public_post_comment_actor-name']",
+                        comment
+                    ),
+
+                    content: text("p", comment),
+
+                    url:
+                        href(".comment__header > a", comment)?.split("?")[0] ?? null
+                }))
+            };
+        }
     });
-
-    await browser.close();
-
-    return data;
 }
 
 async function scrapeLinkedInJob(jobUrl) {
-    const browser = await puppeteer.launch({
-        headless: true,
-        defaultViewport: null,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--mute-audio"
-        ]
-    });
+    return scrapeWithPage({
+        label: "LinkedIn job",
+        url: jobUrl,
+        waitForSelector: ".topcard__title",
+        evaluate: () => {
 
-    const page = await browser.newPage();
+            const $ = (selector, parent = document) =>
+                parent.querySelector(selector);
 
-    await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-    );
+            const $$ = (selector, parent = document) =>
+                [...parent.querySelectorAll(selector)];
 
-    await page.goto(jobUrl, {
-        waitUntil: "networkidle2",
-        timeout: 60000
-    });
+            const text = (selector, parent = document) =>
+                $(selector, parent)?.innerText.trim() ?? null;
 
-    await page.waitForSelector(".topcard__title", {
-        timeout: 30000
-    });
+            const href = (selector, parent = document) =>
+                $(selector, parent)?.href ?? null;
 
-    const job = await page.evaluate(() => {
+            const src = (selector, parent = document) =>
+                $(selector, parent)?.src ?? null;
 
-        const $ = (selector, parent = document) =>
-            parent.querySelector(selector);
+            return {
 
-        const $$ = (selector, parent = document) =>
-            [...parent.querySelectorAll(selector)];
+                title: text(".topcard__title"),
 
-        const text = (selector, parent = document) =>
-            $(selector, parent)?.innerText.trim() ?? null;
+                company: {
+                    name: text(
+                        ".topcard__flavor-row > span:nth-child(1) > a"
+                    ),
+                    url: href(
+                        ".topcard__flavor-row > span:nth-child(1) > a"
+                    )
+                },
 
-        const href = (selector, parent = document) =>
-            $(selector, parent)?.href ?? null;
-
-        const src = (selector, parent = document) =>
-            $(selector, parent)?.src ?? null;
-
-        return {
-
-            title: text(".topcard__title"),
-
-            company: {
-                name: text(
-                    ".topcard__flavor-row > span:nth-child(1) > a"
-                ),
-                url: href(
-                    ".topcard__flavor-row > span:nth-child(1) > a"
-                )
-            },
-
-            location: text(
-                ".topcard__flavor-row > span:nth-child(2)"
-            ),
-
-            description: text(
-                ".show-more-less-html__markup"
-            ),
-
-            recruiter: {
-                icon: src(
-                    ".message-the-recruiter img"
+                location: text(
+                    ".topcard__flavor-row > span:nth-child(2)"
                 ),
 
-                name: text(
-                    ".message-the-recruiter h3"
+                description: text(
+                    ".show-more-less-html__markup"
                 ),
 
-                url: href(
-                    ".message-the-recruiter a"
-                ),
+                recruiter: {
+                    icon: src(
+                        ".message-the-recruiter img"
+                    ),
 
-                designation: text(
-                    ".message-the-recruiter h4"
-                )
-            },
+                    name: text(
+                        ".message-the-recruiter h3"
+                    ),
 
-            additional_details: (() => {
-                const list = document.querySelector(".description__job-criteria-list");
+                    url: href(
+                        ".message-the-recruiter a"
+                    ),
 
-                if (!list) return {};
+                    designation: text(
+                        ".message-the-recruiter h4"
+                    )
+                },
 
-                return [...list.children].reduce((obj, item) => {
-                    const key = item.children[0]?.innerText
-                        ?.trim()
-                        .toLowerCase()
-                        .replace(/\s+/g, "_");
+                additional_details: (() => {
+                    const list = document.querySelector(".description__job-criteria-list");
 
-                    const value = item.children[1]?.innerText?.trim() ?? null;
+                    if (!list) return {};
 
-                    if (key) {
-                        obj[key] = value;
-                    }
+                    return [...list.children].reduce((obj, item) => {
+                        const key = item.children[0]?.innerText
+                            ?.trim()
+                            .toLowerCase()
+                            .replace(/\s+/g, "_");
 
-                    return obj;
-                }, {});
-            })()
+                        const value = item.children[1]?.innerText?.trim() ?? null;
 
-        };
+                        if (key) {
+                            obj[key] = value;
+                        }
+
+                        return obj;
+                    }, {});
+                })()
+
+            };
+        }
     });
-
-    await browser.close();
-
-    return job;
 }
 
 module.exports = { scrapeLinkedInPost, scrapeLinkedInJob };
+
