@@ -5,6 +5,12 @@ const app = express();
 
 app.use(express.json());
 
+app.get("/health",(req,res)=>{
+    return res.json({
+        success: true,
+    });
+})
+
 app.get("/scrape", async (req, res) => {
     try {
         const { url } = req.query;
