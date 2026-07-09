@@ -1,5 +1,6 @@
 const { getSupabase } = require('../config/supabase');
 const { scrapeLinkedInUrl } = require('./scrape.service');
+const { publishScrapeJob } = require('./queue.service');
 const { extractLinkedInUrl, getLinkedInItemType } = require('../utils/linkedin-url');
 const { HttpError } = require('../utils/http-error');
 
@@ -157,6 +158,39 @@ async function findItemByUrl({ sourceUrl, userId }) {
     return data;
 }
 
+async function findItemById(itemId) {
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .select('*')
+        .eq('id', itemId)
+        .maybeSingle();
+
+    throwSupabaseError(error, 'loading queued LinkerIn item');
+
+    return data;
+}
+
+async function createPendingItem({ sourceUrl, user }) {
+    const itemType = getLinkedInItemType(sourceUrl);
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .insert({
+            content: null,
+            is_pending: true,
+            item_type: itemType,
+            scrape_error: null,
+            source_url: sourceUrl,
+            user_email: user.email,
+            user_id: user.id
+        })
+        .select()
+        .single();
+
+    throwSupabaseError(error, 'creating pending LinkerIn item');
+
+    return data;
+}
+
 async function saveLinkedInItem({ rawUrl, user }) {
     const sourceUrl = extractLinkedInUrl(rawUrl);
 
@@ -167,27 +201,80 @@ async function saveLinkedInItem({ rawUrl, user }) {
     const existingItem = await findItemByUrl({ sourceUrl, userId: user.id });
 
     if (existingItem) {
-        return { duplicate: true, item: existingItem };
+        return { duplicate: true, item: existingItem, queued: existingItem.is_pending };
     }
 
-    const itemType = getLinkedInItemType(sourceUrl);
-    const content = await scrapeLinkedInUrl(sourceUrl);
+    const pendingItem = await createPendingItem({ sourceUrl, user });
+
+    try {
+        await publishScrapeJob({
+            itemId: pendingItem.id,
+            itemType: pendingItem.item_type,
+            sourceUrl: pendingItem.source_url,
+            userId: pendingItem.user_id
+        });
+    } catch (error) {
+        await markItemFailed({
+            errorMessage: 'Unable to queue scraping job. Try again later.',
+            itemId: pendingItem.id
+        });
+        throw new HttpError(503, 'Unable to queue scraping job. Try again later.');
+    }
+
+    return { duplicate: false, item: pendingItem, queued: true };
+}
+
+async function markItemFailed({ errorMessage, itemId }) {
     const { data, error } = await getSupabase()
         .from('linkerin_items')
-        .insert({
-            content,
-            item_type: itemType,
-            source_url: sourceUrl,
-            user_email: user.email,
-            user_id: user.id,
-            ...searchableFieldsForItem({ content, itemType })
+        .update({
+            is_pending: false,
+            scrape_error: errorMessage,
+            updated_at: new Date().toISOString()
         })
+        .eq('id', itemId)
         .select()
         .single();
 
-    throwSupabaseError(error, 'saving LinkerIn item');
+    throwSupabaseError(error, 'marking LinkerIn item failed');
 
-    return { duplicate: false, item: data };
+    return data;
 }
 
-module.exports = { listItemsForUser, saveLinkedInItem };
+async function completeQueuedItem({ itemId }) {
+    const item = await findItemById(itemId);
+
+    if (!item) {
+        throw new Error(`Queued item not found: ${itemId}`);
+    }
+
+    if (!item.is_pending) {
+        return item;
+    }
+
+    const content = await scrapeLinkedInUrl(item.source_url);
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .update({
+            content,
+            is_pending: false,
+            scrape_error: null,
+            updated_at: new Date().toISOString(),
+            ...searchableFieldsForItem({ content, itemType: item.item_type })
+        })
+        .eq('id', itemId)
+        .select()
+        .single();
+
+    throwSupabaseError(error, 'completing queued LinkerIn item');
+
+    return data;
+}
+
+module.exports = {
+    completeQueuedItem,
+    listItemsForUser,
+    markItemFailed,
+    saveLinkedInItem
+};
+

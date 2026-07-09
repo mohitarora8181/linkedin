@@ -30,7 +30,7 @@ async function createItem(req, res, next) {
             user: req.user
         });
 
-        return res.status(result.duplicate ? 200 : 201).json({
+        return res.status(result.duplicate ? 200 : 202).json({
             success: true,
             ...result
         });
@@ -40,3 +40,4 @@ async function createItem(req, res, next) {
 }
 
 module.exports = { createItem, listItems };
+
