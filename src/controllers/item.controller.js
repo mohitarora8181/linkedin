@@ -1,12 +1,22 @@
-const { listItemsForUser, saveLinkedInItem } = require("../services/item.service");
+const { listItemsForUser, saveLinkedInItem } = require('../services/item.service');
+
+function normalizeType(value) {
+    return value === 'post' || value === 'job' ? value : null;
+}
 
 async function listItems(req, res, next) {
     try {
-        const items = await listItemsForUser(req.user.id);
+        const result = await listItemsForUser({
+            cursor: req.query.cursor,
+            limit: req.query.limit,
+            search: req.query.search,
+            type: normalizeType(req.query.type),
+            userId: req.user.id
+        });
 
         return res.json({
             success: true,
-            items
+            ...result
         });
     } catch (err) {
         next(err);
