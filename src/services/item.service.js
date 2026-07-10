@@ -187,6 +187,41 @@ async function getItemForUser({ itemId, userId }) {
     return data;
 }
 
+async function repushItemForUser({ itemId, userId }) {
+    const item = await getItemForUser({ itemId, userId });
+
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .update({
+            is_pending: true,
+            scrape_error: null,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', item.id)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+    throwSupabaseError(error, 'repushing LinkerIn item');
+
+    try {
+        await publishScrapeJob({
+            itemId: data.id,
+            itemType: data.item_type,
+            sourceUrl: data.source_url,
+            userId: data.user_id
+        });
+    } catch (publishError) {
+        await markItemFailed({
+            errorMessage: 'Unable to queue scraping job. Try again later.',
+            itemId: data.id
+        });
+        throw new HttpError(503, 'Unable to queue scraping job. Try again later.');
+    }
+
+    return data;
+}
+
 async function createPendingItem({ sourceUrl, user }) {
     const itemType = getLinkedInItemType(sourceUrl);
     const { data, error } = await getSupabase()
@@ -293,7 +328,11 @@ module.exports = {
     getItemForUser,
     listItemsForUser,
     markItemFailed,
+    repushItemForUser,
     saveLinkedInItem
 };
+
+
+
 
 
