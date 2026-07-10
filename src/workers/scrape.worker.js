@@ -1,6 +1,8 @@
 const { createChannel, rabbitMqQueue } = require('../config/rabbitmq');
 const { completeQueuedItem, markItemFailed } = require('../services/item.service');
 
+let workerPromise = null;
+
 async function handleMessage(channel, message) {
     if (!message) return;
 
@@ -42,11 +44,23 @@ async function handleMessage(channel, message) {
 }
 
 async function startWorker() {
-    const channel = await createChannel();
-    await channel.prefetch(1);
-    await channel.consume(rabbitMqQueue, (message) => handleMessage(channel, message), { noAck: false });
+    if (workerPromise) {
+        return workerPromise;
+    }
 
-    console.log(`LinkerIn scrape worker consuming queue: ${rabbitMqQueue}`);
+    workerPromise = (async () => {
+        const channel = await createChannel();
+        await channel.prefetch(1);
+        await channel.consume(rabbitMqQueue, (message) => handleMessage(channel, message), { noAck: false });
+
+        console.log(`LinkerIn scrape worker consuming queue: ${rabbitMqQueue}`);
+        return channel;
+    })().catch((error) => {
+        workerPromise = null;
+        throw error;
+    });
+
+    return workerPromise;
 }
 
 if (require.main === module) {
