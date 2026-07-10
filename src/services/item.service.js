@@ -170,6 +170,23 @@ async function findItemById(itemId) {
     return data;
 }
 
+async function getItemForUser({ itemId, userId }) {
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .select('*')
+        .eq('id', itemId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    throwSupabaseError(error, 'loading LinkerIn item');
+
+    if (!data) {
+        throw new HttpError(404, 'LinkerIn item not found');
+    }
+
+    return data;
+}
+
 async function createPendingItem({ sourceUrl, user }) {
     const itemType = getLinkedInItemType(sourceUrl);
     const { data, error } = await getSupabase()
@@ -273,8 +290,10 @@ async function completeQueuedItem({ itemId }) {
 
 module.exports = {
     completeQueuedItem,
+    getItemForUser,
     listItemsForUser,
     markItemFailed,
     saveLinkedInItem
 };
+
 
