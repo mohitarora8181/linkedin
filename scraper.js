@@ -12,7 +12,7 @@ const VIEWPORT = {
 const NAVIGATION_TIMEOUT_MS = 60000;
 const SELECTOR_TIMEOUT_MS = 30000;
 
-const BLOCKED_RESOURCE_TYPES = new Set(["image", "font", "media"]);
+const BLOCKED_RESOURCE_TYPES = new Set(["font", "media"]);
 
 let browser = null;
 let browserPromise = null;
@@ -127,7 +127,13 @@ async function configurePage(page) {
     return handleRequest;
 }
 
-async function scrapeWithPage({ label, url, waitForSelector, evaluate }) {
+async function scrapeWithPage({
+    label,
+    url,
+    waitForSelector,
+    waitForImageSrcSelectors = [],
+    evaluate
+}) {
     const activeBrowser = await getBrowser();
     const page = await activeBrowser.newPage();
     let requestHandler = null;
@@ -143,6 +149,31 @@ async function scrapeWithPage({ label, url, waitForSelector, evaluate }) {
         await page.waitForSelector(waitForSelector, {
             timeout: SELECTOR_TIMEOUT_MS
         });
+
+        for (const selector of waitForImageSrcSelectors) {
+            try {
+                const selectorExists = await page.$(selector);
+                if (!selectorExists) {
+                    continue;
+                }
+
+                await page.waitForFunction(
+                    imageSelector => {
+                        const image = document.querySelector(imageSelector);
+                        return Boolean(
+                            image?.currentSrc || image?.src || image?.getAttribute("src")
+                        );
+                    },
+                    { timeout: SELECTOR_TIMEOUT_MS },
+                    selector
+                );
+            } catch (error) {
+                logInfo("image src selector did not resolve before timeout", {
+                    label,
+                    selector
+                });
+            }
+        }
 
         return await page.evaluate(evaluate);
     } catch (error) {
@@ -168,6 +199,9 @@ async function scrapeLinkedInPost(postUrl) {
         label: "LinkedIn post",
         url: postUrl,
         waitForSelector: "[data-test-id='main-feed-activity-card__commentary']",
+        waitForImageSrcSelectors: [
+            "[data-test-id='main-feed-activity-card__entity-lockup'] img"
+        ],
         evaluate: () => {
 
             const $ = (selector, parent = document) => parent.querySelector(selector);
@@ -235,6 +269,7 @@ async function scrapeLinkedInJob(jobUrl) {
         label: "LinkedIn job",
         url: jobUrl,
         waitForSelector: ".topcard__title",
+        waitForImageSrcSelectors: [".message-the-recruiter img"],
         evaluate: () => {
 
             const $ = (selector, parent = document) =>
@@ -318,5 +353,3 @@ async function scrapeLinkedInJob(jobUrl) {
 }
 
 module.exports = { scrapeLinkedInPost, scrapeLinkedInJob };
-
-
