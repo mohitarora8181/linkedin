@@ -207,10 +207,12 @@ async function scrapeLinkedInPost(postUrl) {
 
                 mentions: $$(
                     "[data-test-id='main-feed-activity-card__commentary'] > a"
-                ).map(anchor => ({
-                    url: anchor.href?.split("?")[0],
-                    content: anchor.innerText.trim()
-                })),
+                )
+                    .map(anchor => ({
+                        url: anchor.href?.split("?")[0],
+                        content: anchor.innerText.trim()
+                    }))
+                    .filter(mention => !mention.url?.includes("lnkd.in")),
 
                 comments: $$("section .comment").map(comment => ({
                     author: text(
@@ -316,4 +318,5 @@ async function scrapeLinkedInJob(jobUrl) {
 }
 
 module.exports = { scrapeLinkedInPost, scrapeLinkedInJob };
+
 
