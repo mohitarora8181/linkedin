@@ -14,13 +14,13 @@ async function getConnection() {
     return connectionPromise;
 }
 
-async function createChannel() {
+async function createChannel(queueName = rabbitMqQueue) {
     const connection = await getConnection();
     const channel = await connection.createChannel();
 
     await channel.assertExchange(rabbitMqExchange, 'direct', { durable: true });
-    await channel.assertQueue(rabbitMqQueue, { durable: true });
-    await channel.bindQueue(rabbitMqQueue, rabbitMqExchange, rabbitMqQueue);
+    await channel.assertQueue(queueName, { durable: true });
+    await channel.bindQueue(queueName, rabbitMqExchange, queueName);
 
     return channel;
 }

@@ -1,10 +1,11 @@
+const { rabbitMqAiQueue } = require('../config/env');
 const { createChannel, rabbitMqExchange, rabbitMqQueue } = require('../config/rabbitmq');
 
-async function publishScrapeJob(job) {
-    const channel = await createChannel();
+async function publishJob(queueName, job) {
+    const channel = await createChannel(queueName);
     const didPublish = channel.publish(
         rabbitMqExchange,
-        rabbitMqQueue,
+        queueName,
         Buffer.from(JSON.stringify(job)),
         {
             contentType: 'application/json',
@@ -20,4 +21,12 @@ async function publishScrapeJob(job) {
     }
 }
 
-module.exports = { publishScrapeJob };
+function publishScrapeJob(job) {
+    return publishJob(rabbitMqQueue, job);
+}
+
+function publishAiParsingJob(job) {
+    return publishJob(rabbitMqAiQueue, job);
+}
+
+module.exports = { publishAiParsingJob, publishScrapeJob };

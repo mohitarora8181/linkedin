@@ -1,7 +1,30 @@
 const { createChannel, rabbitMqQueue } = require('../config/rabbitmq');
+const { markAiFailed, markAiQueued } = require('../services/ai.service');
+const { publishAiParsingJob } = require('../services/queue.service');
 const { completeQueuedItem, markItemFailed } = require('../services/item.service');
 
 let workerPromise = null;
+
+async function queueAiParsing(item) {
+    await markAiQueued({ itemId: item.id });
+
+    try {
+        await publishAiParsingJob({
+            itemId: item.id,
+            itemType: item.item_type,
+            userId: item.user_id
+        });
+    } catch (error) {
+        await markAiFailed({
+            errorMessage: 'Unable to queue AI mail generation. Try again later.',
+            itemId: item.id
+        });
+        console.error('Failed to queue AI mail generation', {
+            error: error.message,
+            itemId: item.id
+        });
+    }
+}
 
 async function handleMessage(channel, message) {
     if (!message) return;
@@ -15,7 +38,8 @@ async function handleMessage(channel, message) {
             throw new Error('Queue message is missing itemId');
         }
 
-        await completeQueuedItem({ itemId: job.itemId });
+        const item = await completeQueuedItem({ itemId: job.itemId });
+        await queueAiParsing(item);
         channel.ack(message);
     } catch (error) {
         console.error('Failed to process LinkerIn scrape job', {
@@ -49,7 +73,7 @@ async function startWorker() {
     }
 
     workerPromise = (async () => {
-        const channel = await createChannel();
+        const channel = await createChannel(rabbitMqQueue);
         await channel.prefetch(1);
         await channel.consume(rabbitMqQueue, (message) => handleMessage(channel, message), { noAck: false });
 

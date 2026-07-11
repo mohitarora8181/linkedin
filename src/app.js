@@ -1,6 +1,7 @@
 const express = require("express");
 const healthRoutes = require("./routes/health.routes");
 const itemRoutes = require("./routes/item.routes");
+const profileRoutes = require("./routes/profile.routes");
 const scrapeRoutes = require("./routes/scrape.routes");
 const { errorHandler } = require("./middleware/error-handler");
 
@@ -11,7 +12,9 @@ app.use(express.json());
 app.use(healthRoutes);
 app.use(scrapeRoutes);
 app.use(itemRoutes);
+app.use(profileRoutes);
 
 app.use(errorHandler);
 
 module.exports = app;
+

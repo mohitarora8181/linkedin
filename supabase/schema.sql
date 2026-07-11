@@ -77,3 +77,45 @@ create index if not exists linkerin_items_post_search_idx
 create index if not exists linkerin_items_job_search_idx
   on public.linkerin_items (user_id, item_type, job_title, company_name, location)
   where item_type = 'job';
+
+alter table public.linkerin_items add column if not exists ai_status text not null default 'idle' check (ai_status in ('idle', 'queued', 'completed', 'failed'));
+alter table public.linkerin_items add column if not exists ai_error text;
+alter table public.linkerin_items add column if not exists ai_mail jsonb;
+alter table public.linkerin_items add column if not exists is_job_related boolean;
+alter table public.linkerin_items add column if not exists recruiter_email text;
+alter table public.linkerin_items add column if not exists ai_updated_at timestamptz;
+
+create table if not exists public.linkerin_user_profiles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  user_email text not null,
+  resume_summary jsonb not null,
+  resume_file_name text,
+  resume_mime_type text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists linkerin_user_profiles_user_id_idx
+  on public.linkerin_user_profiles (user_id);
+
+alter table public.linkerin_user_profiles enable row level security;
+
+create policy "Users can read their LinkerIn profile"
+  on public.linkerin_user_profiles
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert their LinkerIn profile"
+  on public.linkerin_user_profiles
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their LinkerIn profile"
+  on public.linkerin_user_profiles
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create index if not exists linkerin_items_ai_status_idx
+  on public.linkerin_items (ai_status, ai_updated_at);
