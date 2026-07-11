@@ -246,7 +246,7 @@ async function scrapeLinkedInPost(postUrl) {
                         url: anchor.href?.split("?")[0],
                         content: anchor.innerText.trim()
                     }))
-                    .filter(mention => !mention.url?.includes("lnkd.in")),
+                    .filter(mention => !mention.content?.includes("lnkd.in")),
 
                 comments: $$("section .comment").map(comment => ({
                     author: text(
