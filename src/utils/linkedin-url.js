@@ -8,7 +8,7 @@ function extractLinkedInUrl(value) {
 function getLinkedInItemType(url) {
     const lower = url.toLowerCase();
 
-    if (lower.includes("/jobs/") || lower.includes("currentjobid=") || lower.includes("jobs")) {
+    if (lower.includes("linkedin.com/jobs")) {
         return "job";
     }
 

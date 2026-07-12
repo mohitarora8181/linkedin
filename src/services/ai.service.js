@@ -80,32 +80,36 @@ async function markAiFailed({ errorMessage, itemId }) {
 }
 
 function buildPrompt({ item, resumeSummary }) {
-    return `You are generating an email draft for a LinkedIn opportunity.
+    return `You are generating a ready-to-send email draft for a LinkedIn opportunity. The output will be sent as-is with no manual editing, so it must be complete, accurate, and free of any placeholder or filler text.
 
-Candidate resume summary JSON:
-${JSON.stringify(resumeSummary, null, 2)}
+    Candidate resume summary JSON:
+    ${JSON.stringify(resumeSummary, null, 2)}
 
-LinkedIn item type: ${item.item_type}
-LinkedIn scraped content JSON:
-${JSON.stringify(item.content, null, 2)}
+    LinkedIn item type: ${item.item_type}
+    LinkedIn scraped content JSON:
+    ${JSON.stringify(item.content, null, 2)}
 
-Rules:
-- Return strict JSON only.
-- For item_type "job", always treat it as job related.
-- For item_type "post", first decide if it is truly about a job opening, hiring request, referral opportunity, internship, freelance role, or recruiter call. If not job-related, do not generate subject/message.
-- Extract recruiter or contact email if it appears anywhere in the job/post/comments. If none, use null.
-- Subject must be concise and specific.
-- Message must be a short descriptive cover letter email, personalized using the candidate resume summary and the item content.
-- Do not invent experience, links, email ids, company names, or role details.
+    Rules:
+    - Return strict JSON only. No markdown, no code fences, no text outside the JSON object.
+    - For item_type "job", always treat it as job related.
+    - For item_type "post", first decide if it is truly about a job opening, hiring request, referral opportunity, internship, freelance role, or recruiter call. If not job-related, set is_job_related to false and leave subject/message/recruiter_email as null.
+    - Extract recruiter or contact email if it appears anywhere in the job/post/comments text. If none appears, use null. Never guess or construct an email address.
+    - Subject must be concise, specific, and reference the actual role or company from the content — never generic (e.g. not "Application for Job Opportunity").
+    - Message must be a short, personalized cover-email body (120-180 words) that connects specific details from the LinkedIn content to specific details from the candidate resume summary (skills, past roles, projects). It must read as a finished, natural email a human would send — not a template.
+    - Sign the message using the candidate's actual name from resumeSummary if it is present in the JSON. If the candidate's name is not present in resumeSummary, end the message with "Best regards," and no name line, rather than any bracketed placeholder.
+    - Never use placeholder text of any kind (e.g. "[Your Name]", "[Company]", "[mention experience here]", "Dear Hiring Manager" as a guess when a real name is available). If a detail is missing, either omit that sentence/line entirely or phrase around it naturally — do not leave a gap or bracket for the user to fill in.
+    - Do not invent or assume: experience, skills, certifications, links, email addresses, company names, role titles, salary, location, or any fact not explicitly present in resumeSummary or the LinkedIn content. If uncertain about a fact, exclude it rather than include it.
+    - Do not use generic filler openers like "I hope this email finds you well" or "I am writing to express my interest."
+    - The reason field must briefly justify the is_job_related decision in one sentence, regardless of outcome.
 
-JSON shape:
-{
-  "is_job_related": true,
-  "recruiter_email": "email@example.com or null",
-  "subject": "email subject or null",
-  "message": "email body or null",
-  "reason": "short reason for decision"
-}`;
+    JSON shape:
+    {
+    "is_job_related": true,
+    "recruiter_email": "email@example.com or null",
+    "subject": "email subject or null",
+    "message": "email body or null",
+    "reason": "short reason for decision"
+    }`;
 }
 
 async function callGroqForMail({ item, resumeSummary }) {
