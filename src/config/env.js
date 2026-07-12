@@ -8,9 +8,9 @@ const env = {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     supabaseUrl: process.env.SUPABASE_URL,
     groqApiKey: process.env.GROQ_API_KEY,
-    groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    groqModel: process.env.GROQ_MODEL || 'qwen/qwen3-32b',
     geminiKey: process.env.GEMINI_API_KEY,
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'
 };
 
 module.exports = env;
