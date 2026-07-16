@@ -89,22 +89,40 @@ function buildPrompt({ item, resumeSummary }) {
     LinkedIn scraped content JSON:
     ${JSON.stringify(item.content, null, 2)}
 
-    Rules:
-    - Return strict JSON only. No markdown, no code fences, no text outside the JSON object.
+    Follow these steps in order. Do not skip steps, and do not reveal your step-by-step reasoning in the output — only the final JSON.
+
+    STEP 1 — Verify the source is job-related:
     - For item_type "job", always treat it as job related.
-    - For item_type "post", first decide if it is truly about a job opening, hiring request, referral opportunity, internship, freelance role, or recruiter call. If not job-related, set is_job_related to false and leave subject/message/recruiter_email as null.
-    - Extract recruiter or contact email if it appears anywhere in the job/post/comments text. If none appears, use null. Never guess or construct an email address.
+    - For item_type "post", decide if it is truly about a job opening, hiring request, referral opportunity, internship, freelance role, or recruiter call. If not job-related, set is_job_related to false and leave recruiter_email/subject/message as null, fill "reason" with a one-line explanation, and stop — do not proceed to later steps.
+
+    STEP 2 — Verify the author is actually the recruiter/hiring contact for this specific post:
+    - Check whether the post/job author (not a random commenter) is the one posting the opportunity, hiring, or representing the company/role — e.g. they wrote the post themselves about their own team's opening, or they are clearly the hiring manager/recruiter/founder referenced in the content.
+    - If the author is just sharing, reposting, or reacting to someone else's opportunity (not personally offering or hiring for it), treat this as NOT a direct recruiter match: set is_job_related to false, leave the email fields null, and explain this in "reason" (e.g. "author is resharing another company's job post, not the hiring contact").
+    - Only proceed to Step 3 if the author themselves is the relevant hiring contact, OR the post/job content clearly names a specific recruiter/contact (e.g. "reach out to X" or a named HR contact) that you can address the email to instead of the author.
+
+    STEP 3 — Find the contact email:
+    - Look for a recruiter or contact email anywhere in the job/post text AND in any comments included in the content JSON — recruiters often post their email in a reply to their own post rather than in the main text.
+    - If multiple emails appear, prefer one explicitly attributed to the post author or named hiring contact over an email from an unrelated commenter.
+    - If no valid contact email is found anywhere, use null. Never guess, construct, or auto-format an email address.
+
+    STEP 4 — Select relevant resume content (do not use everything):
+    - From resumeSummary, choose only the 1-2 roles, 0-1 project, and 3-6 skills that are most relevant to the specific role/requirements mentioned in the LinkedIn content. Do not include every role, every project, or every skill from the resume in the email — pick only what directly strengthens the fit for this specific opportunity.
+    - When referencing a role, project, or achievement, keep the attribution exactly as it appears in resumeSummary — never attach an achievement, skill, or impact line to the wrong role, company, or project, and never merge details from two different roles/projects into one claim.
+    - If nothing in resumeSummary is clearly relevant to the opportunity, use only the candidate's headline/summary and the most generally applicable 2-3 skills rather than forcing an irrelevant role or project into the email.
+
+    STEP 5 — Write the email:
     - Subject must be concise, specific, and reference the actual role or company from the content — never generic (e.g. not "Application for Job Opportunity").
-    - Message must be a short, personalized cover-email body (120-180 words) that connects specific details from the LinkedIn content to specific details from the candidate resume summary (skills, past roles, projects). It must read as a finished, natural email a human would send — not a template.
-    - Format the message with proper structure for email readability: a one-line greeting, followed by a blank line, then 2-3 short body paragraphs (2-4 sentences each) separated by blank lines, then a blank line, then a closing line and sign-off. Use "\\n\\n" between each paragraph/section so it renders as distinct blocks in an email client rather than one dense block of text. Do not use bullet points, markdown, headers, or bold/italic syntax inside the message — plain, well-spaced prose only.
-    - Keep each paragraph focused on one idea: paragraph 1 = the hook referencing the specific opportunity, paragraph 2 = relevant background/fit from the resume, final short paragraph = a clear, low-friction next step or ask.
-    - Sign the message using the candidate's actual name from resumeSummary if it is present in the JSON. If the candidate's name is not present in resumeSummary, end the message with "Best regards," and no name line, rather than any bracketed placeholder.
-    - Never use placeholder text of any kind (e.g. "[Your Name]", "[Company]", "[mention experience here]", "Dear Hiring Manager" as a guess when a real name is available). If a detail is missing, either omit that sentence/line entirely or phrase around it naturally — do not leave a gap or bracket for the user to fill in.
+    - Message must be a short, personalized cover-email body (120-180 words) that connects the specific opportunity to the specific resume details selected in Step 4. It must read as a finished, formal, natural email a human would send — not a template, and concise enough for a busy recruiter to read in under 30 seconds.
+    - Format the message for email readability: a one-line greeting, then a blank line, then 2-3 short body paragraphs (2-4 sentences each) separated by blank lines, then a blank line, then a closing line and sign-off. Use "\\n\\n" between each paragraph/section so it renders as distinct blocks in an email client. Do not use bullet points, markdown, headers, or bold/italic syntax inside the message — plain, well-spaced prose only.
+    - Keep each paragraph focused on one idea: paragraph 1 = the hook referencing the specific opportunity, paragraph 2 = the selected relevant background/fit from Step 4, final short paragraph = a clear, low-friction next step or ask.
+    - Sign the message using the candidate's actual name from resumeSummary if present. If the candidate's name is not present, end with "Best regards," and no name line, rather than any bracketed placeholder.
+    - Never use placeholder text of any kind (e.g. "[Your Name]", "[Company]", "[mention experience here]", "Dear Hiring Manager" as a guess when a real name is available). If a detail is missing, omit that sentence/line entirely or phrase around it naturally — do not leave a gap or bracket for the user to fill in.
     - Do not invent or assume: experience, skills, certifications, links, email addresses, company names, role titles, salary, location, or any fact not explicitly present in resumeSummary or the LinkedIn content. If uncertain about a fact, exclude it rather than include it.
     - Do not use generic filler openers like "I hope this email finds you well" or "I am writing to express my interest."
-    - The reason field must briefly justify the is_job_related decision in one sentence, regardless of outcome.
 
-    JSON shape:
+    The "reason" field must briefly state, in one sentence, why is_job_related was set to true or false — including if it was rejected at Step 1 (not job-related) or Step 2 (author is not the recruiter/hiring contact).
+
+    Return strict JSON only, in exactly this shape, with no markdown, no code fences, and no text outside the JSON object:
     {
     "is_job_related": true,
     "recruiter_email": "email@example.com or null",
@@ -130,7 +148,10 @@ async function callGroqForMail({ item, resumeSummary }) {
             temperature: 0.2,
             response_format: { type: 'json_object' },
             messages: [
-                { role: 'system', content: 'You produce strict JSON for recruiting email drafting.' },
+                {
+                    role: 'system',
+                    content: 'You are a strict JSON-generation engine for recruiting email drafts. You always follow the instructions in the user message exactly. You never output markdown, code fences, explanations, or reasoning text — only the raw JSON object requested. If you would normally show your thinking, suppress it entirely and go straight to the final JSON.'
+                },
                 { role: 'user', content: buildPrompt({ item, resumeSummary }) }
             ]
         })

@@ -12,7 +12,18 @@ const VIEWPORT = {
 const NAVIGATION_TIMEOUT_MS = 60000;
 const SELECTOR_TIMEOUT_MS = 30000;
 
-const BLOCKED_RESOURCE_TYPES = new Set(["font", "media"]);
+const BLOCKED_RESOURCE_TYPES = new Set(["font", "media", "stylesheet"]);
+
+const BLOCKED_URL_PATTERNS = [
+    "doubleclick.net",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "analytics.licdn.com",
+    "px.ads.linkedin.com",
+    "facebook.com/tr",
+    "hotjar.com",
+    "segment.io"
+];
 
 let browser = null;
 let browserPromise = null;
@@ -115,6 +126,11 @@ async function configurePage(page) {
 
     const handleRequest = request => {
         if (BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
+            request.abort();
+            return;
+        }
+
+        if (BLOCKED_URL_PATTERNS.some(pattern => url.includes(pattern))) {
             request.abort();
             return;
         }
