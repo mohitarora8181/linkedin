@@ -125,12 +125,14 @@ async function configurePage(page) {
     await page.setRequestInterception(true);
 
     const handleRequest = request => {
+        const requestUrl = request.url();
+
         if (BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
             request.abort();
             return;
         }
 
-        if (BLOCKED_URL_PATTERNS.some(pattern => url.includes(pattern))) {
+        if (BLOCKED_URL_PATTERNS.some(pattern => requestUrl.includes(pattern))) {
             request.abort();
             return;
         }
