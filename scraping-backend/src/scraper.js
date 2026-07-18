@@ -119,13 +119,14 @@ async function configurePage(page) {
 
     const handleRequest = request => {
         try {
+            const requestUrl = request.url();
+
             if (BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
                 request.abort();
                 return;
             }
 
-            const reqUrl = request.url();
-            if (BLOCKED_URL_PATTERNS.some(pattern => reqUrl.includes(pattern))) {
+            if (BLOCKED_URL_PATTERNS.some(pattern => requestUrl.includes(pattern))) {
                 request.abort();
                 return;
             }
