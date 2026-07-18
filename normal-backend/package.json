@@ -1,0 +1,16 @@
+{
+  "name": "linkerin-normal-backend",
+  "version": "1.0.0",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "ai-worker": "node src/workers/ai.worker.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
+    "amqplib": "^2.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "multer": "^2.2.0"
+  }
+}
