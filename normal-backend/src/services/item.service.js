@@ -1,7 +1,8 @@
 const { getSupabase } = require('../config/supabase');
-const { publishScrapeJob } = require('./queue.service');
+const { publishScrapeJob, publishAiParsingJob } = require('./queue.service');
 const { extractLinkedInUrl, getLinkedInItemType } = require('../utils/linkedin-url');
 const { HttpError } = require('../utils/http-error');
+const { markAiQueued, markAiFailed } = require('./ai.service');
 const logger = require('../utils/logger');
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -87,6 +88,26 @@ function addSearchFilter(query, { search, type }) {
     }
 
     return query;
+}
+
+function searchableFieldsForItem({ content, itemType }) {
+    if (itemType === 'post') {
+        return {
+            author_name: content?.author?.name ?? null,
+            post_content: content?.content ?? null,
+            job_title: null,
+            company_name: null,
+            location: null
+        };
+    }
+
+    return {
+        author_name: null,
+        post_content: null,
+        job_title: content?.title ?? null,
+        company_name: content?.company?.name ?? null,
+        location: content?.location ?? null
+    };
 }
 
 async function listItemsForUser({ cursor, limit: rawLimit, search, type, userId }) {

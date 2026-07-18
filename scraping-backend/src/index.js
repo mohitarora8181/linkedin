@@ -63,7 +63,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(env.port, () => {
-    logger.info(`Scraping backend health check server running on http://localhost:${env.port}`);
+    logger.info('Scraping backend health check server running');
 
     // Automatically trigger background RabbitMQ consumer worker
     startWorker().catch((error) => {

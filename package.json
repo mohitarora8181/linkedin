@@ -1,0 +1,13 @@
+{
+  "name": "linkerin",
+  "version": "1.0.0",
+  "description": "LinkedIn scraper refactored workspace",
+  "scripts": {
+    "start:scraper": "npm --prefix scraping-backend start",
+    "start:normal": "npm --prefix normal-backend start",
+    "worker:ai": "npm --prefix normal-backend run ai-worker"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

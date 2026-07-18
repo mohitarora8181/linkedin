@@ -13,7 +13,6 @@ process.on('unhandledRejection', (reason, promise) => {
     logger.error('CRITICAL: Standalone Scrape Worker unhandled rejection', reason);
 });
 
-
 let workerChannel = null;
 let isConsuming = false;
 
@@ -112,19 +111,17 @@ async function publishAiParsingJob(job) {
     }
 }
 
-async function queueAiParsing(item) {
-    await markAiQueued({ itemId: item.id });
+async function queueAiParsing({ id, item_type, user_id }) {
+    await markAiQueued({ itemId: id });
 
     try {
         await publishAiParsingJob({
-            itemId: item.id,
-            itemType: item.item_type,
-            userId: item.user_id
+            itemId: id,
+            itemType: item_type,
+            userId: user_id
         });
     } catch (error) {
-        logger.error('Failed to queue AI mail generation job', error, { itemId: item.id });
-        
-        // Update database with AI queuing failure
+        logger.error('Failed to queue AI mail generation job', error, { itemId: id });
         try {
             const supabase = getSupabase();
             await supabase
@@ -134,7 +131,7 @@ async function queueAiParsing(item) {
                     ai_error: 'Unable to queue AI mail generation. Try again later.',
                     updated_at: new Date().toISOString()
                 })
-                .eq('id', item.id);
+                .eq('id', id);
         } catch (dbErr) {
             logger.error('Failed to update DB AI status after queue publish failure', dbErr);
         }
@@ -149,36 +146,33 @@ async function handleMessage(channel, message) {
         job = JSON.parse(message.content.toString('utf8'));
         logger.info('Processing scrape job', { job });
 
-        if (!job.itemId || !job.sourceUrl) {
-            throw new Error('Queue message is missing itemId or sourceUrl');
+        const { itemId, sourceUrl, itemType, userId } = job;
+
+        if (!itemId || !sourceUrl) {
+            logger.warn('Job ignored: missing itemId or sourceUrl in payload', { job });
+            channel.ack(message);
+            return;
         }
 
         const supabase = getSupabase();
 
-        // 1. Get the item details
-        const { data: item, error: fetchError } = await supabase
-            .from('linkerin_items')
-            .select('*')
-            .eq('id', job.itemId)
-            .maybeSingle();
+        // 1. Perform scraping (no read DB query needed, parameters are in job payload!)
+        let content = null;
+        let scrapeError = null;
 
-        if (fetchError) throw fetchError;
-        if (!item) {
-            logger.warn(`Job ignored: Item ${job.itemId} not found in database`);
+        try {
+            content = await scrapeLinkedInUrl(sourceUrl);
+        } catch (err) {
+            scrapeError = err.message || 'Scraping failed';
+        }
+
+        if (scrapeError) {
+            await markItemFailed({ itemId, errorMessage: scrapeError });
             channel.ack(message);
             return;
         }
 
-        if (!item.is_pending) {
-            logger.info(`Item ${job.itemId} is already processed. Skipping scrape.`);
-            channel.ack(message);
-            return;
-        }
-
-        // 2. Perform scraping
-        const content = await scrapeLinkedInUrl(item.source_url);
-
-        // 3. Update database
+        // 2. Update database directly
         const { data: updatedItem, error: updateError } = await supabase
             .from('linkerin_items')
             .update({
@@ -186,16 +180,16 @@ async function handleMessage(channel, message) {
                 is_pending: false,
                 scrape_error: null,
                 updated_at: new Date().toISOString(),
-                ...searchableFieldsForItem({ content, itemType: item.item_type })
+                ...searchableFieldsForItem({ content, itemType })
             })
-            .eq('id', item.id)
+            .eq('id', itemId)
             .select()
             .single();
 
         if (updateError) throw updateError;
-        logger.info(`Successfully scraped and updated item ${item.id}`);
+        logger.info(`Successfully scraped and updated item ${itemId}`);
 
-        // 4. Publish AI job
+        // 3. Queue AI job directly
         await queueAiParsing(updatedItem);
 
         channel.ack(message);
@@ -208,16 +202,12 @@ async function handleMessage(channel, message) {
                     itemId: job.itemId,
                     errorMessage: error.message || 'Scraping failed'
                 });
-                
-                // If we successfully marked it failed in DB, ack the message (no requeue)
                 channel.ack(message);
             } catch (dbUpdateError) {
                 logger.error('Could not update DB with scrape error, nacking message with requeue', dbUpdateError);
-                // Nack and requeue so another consumer can try, or retry when database is back
                 channel.nack(message, false, true);
             }
         } else {
-            // Malformed message with no itemId - ack it to prevent infinite queue blockage
             channel.ack(message);
         }
     }
