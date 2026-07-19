@@ -1,6 +1,7 @@
 const app = require('./app');
 const env = require('./config/env');
 const logger = require('./utils/logger');
+const { startAiWorker } = require('./workers/ai.worker');
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
@@ -13,4 +14,9 @@ process.on('unhandledRejection', (reason, promise) => {
 
 app.listen(env.port, () => {
     logger.info(`LinkerIn Normal Backend server running on http://localhost:${env.port}`);
+
+    // Auto-start AI worker consumer on server start
+    startAiWorker().catch((error) => {
+        logger.error('Unable to start Groq AI parsing worker', error);
+    });
 });
