@@ -8,7 +8,8 @@ const env = {
     rabbitMqAiQueue: process.env.RABBITMQ_AI_QUEUE || 'groq_ai_parsing',
     rabbitMqUrl: process.env.RABBITMQ_URL,
     supabaseUrl: process.env.SUPABASE_URL,
-    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    scrapeConcurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10)
 };
 
 function validateEnv() {

@@ -13,7 +13,7 @@ const VIEWPORT = {
 const NAVIGATION_TIMEOUT_MS = 60000;
 const SELECTOR_TIMEOUT_MS = 30000;
 
-const BLOCKED_RESOURCE_TYPES = new Set(["font", "media", "stylesheet"]);
+const BLOCKED_RESOURCE_TYPES = new Set(["font", "media", "stylesheet", "image"]);
 
 const BLOCKED_URL_PATTERNS = [
     "doubleclick.net",
@@ -29,6 +29,7 @@ const BLOCKED_URL_PATTERNS = [
 let browser = null;
 let browserPromise = null;
 let shutdownHandlersInstalled = false;
+const MAX_PAGES_PER_BROWSER = 50;
 
 function installShutdownHandlers() {
     if (shutdownHandlersInstalled) return;
@@ -62,14 +63,21 @@ async function launchBrowser() {
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-extensions",
-            "--mute-audio"
+            "--mute-audio",
+            "--disable-gpu",
+            "--blink-settings=imagesEnabled=false"
         ]
     });
 
+    launchedBrowser.activePagesCount = 0;
+    launchedBrowser.pagesOpenedCount = 0;
+
     launchedBrowser.once("disconnected", () => {
         logger.warn("Puppeteer browser disconnected");
-        browser = null;
-        browserPromise = null;
+        if (browser === launchedBrowser) {
+            browser = null;
+            browserPromise = null;
+        }
     });
 
     return launchedBrowser;
@@ -147,12 +155,14 @@ async function scrapeWithPage({
     label,
     url,
     waitForSelector,
-    waitForImageSrcSelectors = [],
     evaluate
 }) {
     const activeBrowser = await getBrowser();
     const page = await activeBrowser.newPage();
     let requestHandler = null;
+
+    activeBrowser.activePagesCount++;
+    activeBrowser.pagesOpenedCount++;
 
     // Handle unexpected page crashes gracefully
     page.on("error", err => {
@@ -173,30 +183,6 @@ async function scrapeWithPage({
             timeout: SELECTOR_TIMEOUT_MS
         });
 
-        for (const selector of waitForImageSrcSelectors) {
-            try {
-                const selectorExists = await page.$(selector);
-                if (!selectorExists) {
-                    continue;
-                }
-
-                await page.waitForFunction(
-                    imageSelector => {
-                        const image = document.querySelector(imageSelector);
-                        return Boolean(
-                            image?.currentSrc || image?.src || image?.getAttribute("src")
-                        );
-                    },
-                    { timeout: SELECTOR_TIMEOUT_MS },
-                    selector
-                );
-            } catch (error) {
-                logger.info("Image src selector did not resolve before timeout", {
-                    label,
-                    selector
-                });
-            }
-        }
 
         logger.info("Evaluating scraping functions on page content", { label });
         return await page.evaluate(evaluate);
@@ -219,6 +205,25 @@ async function scrapeWithPage({
         } catch (error) {
             logger.error("Failed to close page", error, { label, url });
         }
+
+        activeBrowser.activePagesCount--;
+
+        // Browser recreation triggers when max limit reached
+        if (activeBrowser.pagesOpenedCount >= MAX_PAGES_PER_BROWSER) {
+            if (browser === activeBrowser) {
+                logger.info(`Browser reached page threshold (${MAX_PAGES_PER_BROWSER}). Retiring current browser.`);
+                browser = null;
+                browserPromise = null;
+            }
+            activeBrowser.shouldCloseWhenIdle = true;
+        }
+
+        if (activeBrowser.shouldCloseWhenIdle && activeBrowser.activePagesCount === 0) {
+            logger.info("Closing retired browser instance as all active pages have completed.");
+            activeBrowser.close().catch(err => {
+                logger.error("Error closing retired browser instance", err);
+            });
+        }
     }
 }
 
@@ -227,9 +232,6 @@ async function scrapeLinkedInPost(postUrl) {
         label: "LinkedIn post",
         url: postUrl,
         waitForSelector: "[data-test-id='main-feed-activity-card__commentary']",
-        waitForImageSrcSelectors: [
-            "[data-test-id='main-feed-activity-card__entity-lockup'] img"
-        ],
         evaluate: () => {
             const $ = (selector, parent = document) => parent.querySelector(selector);
             const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
@@ -266,7 +268,6 @@ async function scrapeLinkedInJob(jobUrl) {
         label: "LinkedIn job",
         url: jobUrl,
         waitForSelector: ".topcard__title",
-        waitForImageSrcSelectors: [".message-the-recruiter img"],
         evaluate: () => {
             const $ = (selector, parent = document) => parent.querySelector(selector);
             const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];

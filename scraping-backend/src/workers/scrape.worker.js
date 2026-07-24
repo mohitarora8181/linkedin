@@ -1,7 +1,7 @@
 const { createChannel, onReconnect, rabbitMqExchange, rabbitMqQueue } = require('../config/rabbitmq');
 const { getSupabase } = require('../config/supabase');
 const { scrapeLinkedInUrl } = require('../services/scrape.service');
-const { rabbitMqAiQueue } = require('../config/env');
+const env = require('../config/env');
 const logger = require('../utils/logger');
 
 // Prevent worker process from crashing on unexpected errors
@@ -81,10 +81,10 @@ async function markAiQueued({ itemId }) {
 async function publishAiParsingJob(job) {
     let channel = null;
     try {
-        channel = await createChannel(rabbitMqAiQueue);
+        channel = await createChannel(env.rabbitMqAiQueue);
         const didPublish = channel.publish(
             rabbitMqExchange,
-            rabbitMqAiQueue,
+            env.rabbitMqAiQueue,
             Buffer.from(JSON.stringify(job)),
             {
                 contentType: 'application/json',
@@ -96,7 +96,7 @@ async function publishAiParsingJob(job) {
         if (!didPublish) {
             throw new Error('RabbitMQ publish buffer is full.');
         }
-        logger.info(`Successfully published AI job to ${rabbitMqAiQueue}`, { itemId: job.itemId });
+        logger.info(`Successfully published AI job to ${env.rabbitMqAiQueue}`, { itemId: job.itemId });
     } catch (err) {
         logger.error('Failed to publish AI parsing job to RabbitMQ', err);
         throw err;
@@ -219,7 +219,7 @@ async function startWorker() {
         isConsuming = false;
         
         workerChannel = await createChannel(rabbitMqQueue);
-        await workerChannel.prefetch(1);
+        await workerChannel.prefetch(env.scrapeConcurrency);
         
         await workerChannel.consume(rabbitMqQueue, (message) => handleMessage(workerChannel, message), { noAck: false });
         isConsuming = true;
