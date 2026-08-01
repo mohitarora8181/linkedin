@@ -3,15 +3,6 @@ const { createChannel, onReconnect } = require('../config/rabbitmq');
 const { markAiFailed, processAiParsingJob } = require('../services/ai.service');
 const logger = require('../utils/logger');
 
-// Prevent worker process from crashing on unexpected errors
-process.on('uncaughtException', (err) => {
-    logger.error('CRITICAL: Standalone AI Worker uncaught exception', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    logger.error('CRITICAL: Standalone AI Worker unhandled rejection', reason);
-});
-
 let workerChannel = null;
 let isConsuming = false;
 
@@ -81,6 +72,14 @@ onReconnect(async () => {
 });
 
 if (require.main === module) {
+    process.on('uncaughtException', (err) => {
+        logger.error('CRITICAL: AI worker uncaught exception', err);
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error('CRITICAL: AI worker unhandled rejection', reason);
+    });
+
     startAiWorker().catch((error) => {
         logger.error('Process startup error in AI worker', error);
         process.exit(1);

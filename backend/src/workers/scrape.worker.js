@@ -1,17 +1,9 @@
-const { createChannel, onReconnect, rabbitMqExchange, rabbitMqQueue } = require('../config/rabbitmq');
+const { createChannel, onReconnect, rabbitMqQueue } = require('../config/rabbitmq');
 const { getSupabase } = require('../config/supabase');
 const { scrapeLinkedInUrl } = require('../services/scrape.service');
+const { queueAiParsing } = require('../services/ai-queue.service');
 const env = require('../config/env');
 const logger = require('../utils/logger');
-
-// Prevent worker process from crashing on unexpected errors
-process.on('uncaughtException', (err) => {
-    logger.error('CRITICAL: Standalone Scrape Worker uncaught exception', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    logger.error('CRITICAL: Standalone Scrape Worker unhandled rejection', reason);
-});
 
 let workerChannel = null;
 let isConsuming = false;
@@ -53,88 +45,6 @@ async function markItemFailed({ itemId, errorMessage }) {
     } catch (err) {
         logger.error(`Failed to mark item ${itemId} as failed in Supabase`, err);
         throw err;
-    }
-}
-
-async function markAiQueued({ itemId }) {
-    try {
-        const supabase = getSupabase();
-        const { error } = await supabase
-            .from('linkerin_items')
-            .update({
-                ai_status: 'queued',
-                ai_error: null,
-                ai_mail: null,
-                is_job_related: null,
-                recruiter_email: null,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', itemId);
-
-        if (error) throw error;
-    } catch (err) {
-        logger.error(`Failed to mark item ${itemId} AI status as queued`, err);
-        throw err;
-    }
-}
-
-async function publishAiParsingJob(job) {
-    let channel = null;
-    try {
-        channel = await createChannel(env.rabbitMqAiQueue);
-        const didPublish = channel.publish(
-            rabbitMqExchange,
-            env.rabbitMqAiQueue,
-            Buffer.from(JSON.stringify(job)),
-            {
-                contentType: 'application/json',
-                deliveryMode: 2,
-                persistent: true
-            }
-        );
-
-        if (!didPublish) {
-            throw new Error('RabbitMQ publish buffer is full.');
-        }
-        logger.info(`Successfully published AI job to ${env.rabbitMqAiQueue}`, { itemId: job.itemId });
-    } catch (err) {
-        logger.error('Failed to publish AI parsing job to RabbitMQ', err);
-        throw err;
-    } finally {
-        if (channel) {
-            try {
-                await channel.close();
-            } catch (e) {
-                // Ignore
-            }
-        }
-    }
-}
-
-async function queueAiParsing({ id, item_type, user_id }) {
-    await markAiQueued({ itemId: id });
-
-    try {
-        await publishAiParsingJob({
-            itemId: id,
-            itemType: item_type,
-            userId: user_id
-        });
-    } catch (error) {
-        logger.error('Failed to queue AI mail generation job', error, { itemId: id });
-        try {
-            const supabase = getSupabase();
-            await supabase
-                .from('linkerin_items')
-                .update({
-                    ai_status: 'failed',
-                    ai_error: 'Unable to queue AI mail generation. Try again later.',
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', id);
-        } catch (dbErr) {
-            logger.error('Failed to update DB AI status after queue publish failure', dbErr);
-        }
     }
 }
 
@@ -241,10 +151,18 @@ onReconnect(async () => {
 });
 
 if (require.main === module) {
+    process.on('uncaughtException', (err) => {
+        logger.error('CRITICAL: Scrape worker uncaught exception', err);
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error('CRITICAL: Scrape worker unhandled rejection', reason);
+    });
+
     startWorker().catch((error) => {
         logger.error('Process startup error in scrape worker', error);
         process.exit(1);
     });
 }
 
-module.exports = { startWorker, queueAiParsing };
+module.exports = { startWorker };

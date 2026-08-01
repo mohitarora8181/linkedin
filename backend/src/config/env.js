@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const isServerless = Boolean(process.env.VERCEL);
+
 const env = {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: process.env.PORT || 3000,
@@ -12,7 +14,10 @@ const env = {
     groqApiKey: process.env.GROQ_API_KEY,
     groqModel: process.env.GROQ_MODEL || 'qwen/qwen3-32b',
     geminiKey: process.env.GEMINI_API_KEY,
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+    scrapeConcurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10),
+    enableScrapeWorker: !isServerless && process.env.ENABLE_SCRAPE_WORKER !== 'false',
+    enableAiWorker: !isServerless && process.env.ENABLE_AI_WORKER !== 'false'
 };
 
 function validateEnv() {
@@ -24,7 +29,7 @@ function validateEnv() {
         'GROQ_API_KEY'
     ];
 
-    const missing = required.filter(key => !process.env[key]);
+    const missing = required.filter((key) => !process.env[key]);
     if (missing.length > 0) {
         console.error(`[env:error] Missing required environment variables: ${missing.join(', ')}`);
     }
