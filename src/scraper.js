@@ -55,6 +55,7 @@ async function launchBrowser() {
 
     logger.info("Launching a new Puppeteer instance");
     const launchedBrowser = await puppeteer.launch({
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         headless: true,
         defaultViewport: VIEWPORT,
         protocolTimeout: NAVIGATION_TIMEOUT_MS,
