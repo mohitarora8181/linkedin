@@ -94,40 +94,52 @@ function buildPrompt({ item, resumeSummary }) {
 
     STEP 1 — Verify the content itself is job-related:
     - For item_type "job", always treat it as job related.
-    - For item_type "post", decide if it is truly about a job opening, hiring request, referral opportunity, internship, freelance role, or recruiter call — regardless of who is posting it. If it is not job-related at all (e.g. a general update, opinion post, celebration, article share unrelated to hiring), set is_job_related to false and leave recruiter_email/subject/message as null, fill "reason" with a one-line explanation, and stop — do not proceed to later steps.
-    - If it is job-related in any way, set is_job_related to true and proceed to Step 2, even if the author may not be the direct hiring contact.
+    - For item_type "post": First, scan for ANY of the following hard-trigger signals — if even one is present, immediately set is_job_related to true and skip the rest of this step:
+        • Phrases like "we are hiring", "we're hiring", "hiring for", "looking for", "join our team", "open position", "job opening", "vacancy", "apply now", "now hiring"
+        • A structured list of: Position/Role/Title + Location + Shift/Timing + Experience/Qualification
+        • A "How to Apply" section, even informal (e.g., "DM me", "send your resume", "share your CV")
+        • An application email address mentioned in the body (e.g., "send resume to xxx@company.com")
+        • Tags like #hiring, #jobs, #recruitment, #careers, #jobopenings, #opportunity
+        • Explicit mention of salary, CTC, stipend, shift timings for a role
+    - Only set is_job_related to false if NONE of the above signals are present AND the post is clearly a general update, opinion, celebration, article share, or personal milestone completely unrelated to any hiring activity. Err strongly on the side of true — it is far worse to miss a real job post than to classify a borderline post as job-related.
 
     STEP 2 — Determine whether the author is the direct recruiter/hiring contact:
     - Check whether the post/job author is personally offering or hiring for this role (their own team's opening, or they are the hiring manager/recruiter/founder referenced in the content) versus simply sharing, reposting, or reacting to someone else's opportunity.
     - This determination does NOT change is_job_related — it only changes how the email is addressed and greeted in Step 5. Note your finding briefly in "reason" regardless of outcome (e.g. "author is the hiring manager for this role" or "author is resharing another company's opening, not the direct hiring contact").
 
-    STEP 3 — Find the contact email:
-    - Look for a recruiter or contact email anywhere in the job/post text AND in any comments included in the content JSON — recruiters often post their email in a reply to their own post rather than in the main text.
-    - If multiple emails appear, prefer one explicitly attributed to the post author or a named hiring contact over an email from an unrelated commenter.
-    - If no valid contact email is found anywhere, use null. Never guess, construct, or auto-format an email address.
+    STEP 3 — Find ALL contact emails:
+    - Look for recruiter or contact emails anywhere in the job/post text AND in any comments included in the content JSON — recruiters often post their email in a reply to their own post rather than in the main text.
+    - Collect every distinct email address you find. Return them as an ordered JSON array in recruiter_emails: place emails explicitly attributed to the post author or a named hiring contact first, then emails from other named contacts, then any emails found in comments from others.
+    - If no valid contact email is found anywhere, use an empty array []. Never guess, construct, or auto-format an email address.
 
     STEP 4 — Select relevant resume content (do not use everything):
     - From resumeSummary, choose only the 1-2 roles, 0-1 project, and 3-6 skills that are most relevant to the specific role/requirements mentioned in the LinkedIn content. Do not include every role, every project, or every skill from the resume in the email — pick only what directly strengthens the fit for this specific opportunity.
     - When referencing a role, project, or achievement, keep the attribution exactly as it appears in resumeSummary — never attach an achievement, skill, or impact line to the wrong role, company, or project, and never merge details from two different roles/projects into one claim.
     - If nothing in resumeSummary is clearly relevant to the opportunity, use only the candidate's headline/summary and the most generally applicable 2-3 skills rather than forcing an irrelevant role or project into the email.
 
+    STEP 4b — Detect email format instructions in the post/job content:
+    - Carefully read the post/job description for any explicit instructions about HOW to apply or format the email (e.g. "use this subject line:", "email format:", "send your application with the following structure:", "mention X in the subject", "include your GitHub/LinkedIn/portfolio", specific templates or bullet-point requirements).
+    - If such instructions are found, your email MUST follow that format EXACTLY, filling in the candidate's real details from resumeSummary where required. Do NOT override the instructed format with your own structure.
+    - If no format instructions are found, use the default format described in Step 5.
+    - Note any detected format requirement briefly in the "reason" field.
+
     STEP 5 — Write the email:
     - Greeting: if Step 2 found the author is the direct hiring contact and their name is available, greet them by name. If the author is not the direct hiring contact, or no name is available, use a neutral professional greeting (e.g. "Hi," or "Hello,") rather than guessing a name or company HR title.
-    - Subject must be concise, specific, and reference the actual role or company from the content — never generic (e.g. not "Application for Job Opportunity").
-    - Message must be a short, personalized cover-email body (120-180 words) that connects the specific opportunity to the specific resume details selected in Step 4. It must read as a finished, formal, natural email a human would send — not a template, and concise enough for a busy recruiter to read in under 30 seconds.
-    - Format the message for email readability: a one-line greeting, then a blank line, then 2-3 short body paragraphs (2-4 sentences each) separated by blank lines, then a blank line, then a closing line and sign-off. Use "\\n\\n" between each paragraph/section so it renders as distinct blocks in an email client. Do not use bullet points, markdown, headers, or bold/italic syntax inside the message — plain, well-spaced prose only.
+    - Subject must be concise, specific, and reference the actual role or company from the content — never generic (e.g. not "Application for Job Opportunity"). If Step 4b found a required subject format, use that format exactly.
+    - Message must be a short, personalized cover-email body (120-180 words) that connects the specific opportunity to the specific resume details selected in Step 4. It must read as a finished, formal, natural email a human would send — not a template, and concise enough for a busy recruiter to read in under 30 seconds. If Step 4b found a required email body format or template, follow it exactly instead of this default guidance.
+    - Format the message for email readability: a one-line greeting, then a blank line, then 2-3 short body paragraphs (2-4 sentences each) separated by blank lines, then a blank line, then a closing line and sign-off. Use "\\n\\n" between each paragraph/section so it renders as distinct blocks in an email client. Do not use bullet points, markdown, headers, or bold/italic syntax inside the message — plain, well-spaced prose only. (Override this format only if Step 4b detected a specific required format.)
     - Keep each paragraph focused on one idea: paragraph 1 = the hook referencing the specific opportunity, paragraph 2 = the selected relevant background/fit from Step 4, final short paragraph = a clear, low-friction next step or ask.
     - Sign the message using the candidate's actual name from resumeSummary if present. If the candidate's name is not present, end with "Best regards," and no name line, rather than any bracketed placeholder.
     - Never use placeholder text of any kind (e.g. "[Your Name]", "[Company]", "[mention experience here]", "Dear Hiring Manager" as a guess when a real name is available). If a detail is missing, omit that sentence/line entirely or phrase around it naturally — do not leave a gap or bracket for the user to fill in.
     - Do not invent or assume: experience, skills, certifications, links, email addresses, company names, role titles, salary, location, or any fact not explicitly present in resumeSummary or the LinkedIn content. If uncertain about a fact, exclude it rather than include it.
     - Do not use generic filler openers like "I hope this email finds you well" or "I am writing to express my interest."
 
-    The "reason" field must briefly state, in one sentence, why is_job_related was set to true or false, and if true, whether the author was found to be the direct hiring contact or not.
+    The "reason" field must briefly state, in one sentence, why is_job_related was set to true or false, and if true, whether the author was found to be the direct hiring contact or not, and whether any email format instructions were detected.
 
     Return strict JSON only, in exactly this shape, with no markdown, no code fences, and no text outside the JSON object:
     {
     "is_job_related": true,
-    "recruiter_email": "email@example.com or null",
+    "recruiter_emails": ["email@example.com"],
     "subject": "email subject or null",
     "message": "email body or null",
     "reason": "short reason for decision"
@@ -148,7 +160,9 @@ async function callGroqForMail({ item, resumeSummary }) {
         },
         body: JSON.stringify({
             model: groqModel,
-            temperature: 0.2,
+            temperature: 0.1,
+            // Disable Qwen3 thinking mode — it over-analyzes classification and causes wrong is_job_related results
+            thinking: { type: 'disabled' },
             response_format: { type: 'json_object' },
             messages: [
                 {
@@ -183,6 +197,17 @@ async function processAiParsingJob({ itemId }) {
     const result = await callGroqForMail({ item, resumeSummary });
     const isJobRelated = item.item_type === 'job' ? true : Boolean(result.is_job_related);
 
+    // Normalize recruiter_emails — accept both old string and new array format from AI
+    let recruiterEmails = null;
+    if (isJobRelated) {
+        const raw = result.recruiter_emails ?? result.recruiter_email ?? null;
+        if (Array.isArray(raw)) {
+            recruiterEmails = raw.filter(Boolean).length > 0 ? raw.filter(Boolean) : null;
+        } else if (typeof raw === 'string' && raw.trim()) {
+            recruiterEmails = [raw.trim()];
+        }
+    }
+
     return updateAiFields(item.id, {
         ai_error: null,
         ai_mail: isJobRelated ? {
@@ -192,7 +217,8 @@ async function processAiParsingJob({ itemId }) {
         } : null,
         ai_status: 'completed',
         is_job_related: isJobRelated,
-        recruiter_email: isJobRelated ? (result.recruiter_email || null) : null
+        // Store as JSON array string so existing text column holds multiple emails
+        recruiter_email: recruiterEmails ? JSON.stringify(recruiterEmails) : null
     });
 }
 

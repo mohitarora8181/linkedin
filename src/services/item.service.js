@@ -284,7 +284,31 @@ async function saveLinkedInItem({ rawUrl, user }) {
     return { duplicate: false, item: pendingItem, queued: true };
 }
 
+async function countItemsForUser({ userId }) {
+    const [postResult, jobResult] = await Promise.all([
+        getSupabase()
+            .from('linkerin_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('item_type', 'post'),
+        getSupabase()
+            .from('linkerin_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('item_type', 'job')
+    ]);
+
+    throwSupabaseError(postResult.error, 'counting post items');
+    throwSupabaseError(jobResult.error, 'counting job items');
+
+    return {
+        posts: postResult.count ?? 0,
+        jobs: jobResult.count ?? 0
+    };
+}
+
 module.exports = {
+    countItemsForUser,
     getItemForUser,
     listItemsForUser,
     markItemFailed,
