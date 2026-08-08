@@ -1,4 +1,4 @@
-const { countItemsForUser, getItemForUser, listItemsForUser, repushItemForUser, saveLinkedInItem } = require('../services/item.service');
+const { countItemsForUser, getItemForUser, listItemsForUser, markItemMailSentForUser, repushItemForUser, saveLinkedInItem } = require('../services/item.service');
 
 function normalizeType(value) {
     return value === 'post' || value === 'job' ? value : null;
@@ -72,6 +72,22 @@ async function createItem(req, res, next) {
     }
 }
 
+async function markItemSent(req, res, next) {
+    try {
+        const item = await markItemMailSentForUser({
+            itemId: req.params.id,
+            userId: req.user.id
+        });
+
+        return res.json({
+            success: true,
+            item
+        });
+    } catch (err) {
+        next(err);
+    }
+}
+
 async function getItemCounts(req, res, next) {
     try {
         const counts = await countItemsForUser({ userId: req.user.id });
@@ -81,4 +97,4 @@ async function getItemCounts(req, res, next) {
     }
 }
 
-module.exports = { createItem, getItem, getItemCounts, listItems, repushItem };
+module.exports = { createItem, getItem, getItemCounts, listItems, markItemSent, repushItem };

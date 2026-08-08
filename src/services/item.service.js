@@ -307,11 +307,31 @@ async function countItemsForUser({ userId }) {
     };
 }
 
+async function markItemMailSentForUser({ itemId, userId }) {
+    const item = await getItemForUser({ itemId, userId });
+
+    const { data, error } = await getSupabase()
+        .from('linkerin_items')
+        .update({
+            mail_sent: true,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', item.id)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+    throwSupabaseError(error, 'marking LinkerIn mail sent');
+
+    return data;
+}
+
 module.exports = {
     countItemsForUser,
     getItemForUser,
     listItemsForUser,
     markItemFailed,
+    markItemMailSentForUser,
     repushItemForUser,
     saveLinkedInItem
 };
