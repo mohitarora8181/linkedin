@@ -12,7 +12,7 @@ const env = {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     supabaseUrl: process.env.SUPABASE_URL,
     groqApiKey: process.env.GROQ_API_KEY,
-    groqModel: process.env.GROQ_MODEL || 'qwen/qwen3-32b',
+    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
     geminiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
     scrapeConcurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10),

@@ -67,6 +67,7 @@ async function markAiQueued({ itemId }) {
     return updateAiFields(itemId, {
         ai_error: null,
         ai_mail: null,
+        linkedin_message_draft: null,
         ai_status: 'queued',
         is_job_related: null,
         recruiter_email: null
@@ -132,7 +133,14 @@ function buildPrompt({ item, resumeSummary }) {
     - Sign the message using the candidate's actual name from resumeSummary if present. If the candidate's name is not present, end with "Best regards," and no name line, rather than any bracketed placeholder.
     - Never use placeholder text of any kind (e.g. "[Your Name]", "[Company]", "[mention experience here]", "Dear Hiring Manager" as a guess when a real name is available). If a detail is missing, omit that sentence/line entirely or phrase around it naturally — do not leave a gap or bracket for the user to fill in.
     - Do not invent or assume: experience, skills, certifications, links, email addresses, company names, role titles, salary, location, or any fact not explicitly present in resumeSummary or the LinkedIn content. If uncertain about a fact, exclude it rather than include it.
-    - Do not use generic filler openers like "I hope this email finds you well" or "I am writing to express my interest."
+    STEP 5b — Write a structured, formal LinkedIn primary referral & outreach message draft:
+    - Analyze whether the post or job content semantically indicates that the candidate can connect with, direct message (DM), or share a brief CV/referral request with the post author or recruiter (e.g. author mentions "DM me", "reach out", "connect", "let's talk", or is actively hiring/referring for a role).
+    - If appropriate, draft a formal, high-converting primary referral message (60-100 words) formatted cleanly into 3 distinct sections separated by "\\n\\n":
+        Section 1 — Formal Salutation: "Hi [Author First Name]," (use author's real first name from content if available, else "Hi," or "Hello," — never use bracketed placeholders like "[Name]").
+        Section 2 — Referral Pitch: Reference the specific opportunity/role from the post, state interest, and highlight 1-2 key achievements or core skills from resumeSummary that directly demonstrate strong fit.
+        Section 3 — Call to Action & Sign-off: Respectfully request a referral, open position contact, or brief conversation (e.g., "I would be grateful for a quick chat or referral for this opening. Thank you for your time!"), signed off with the candidate's real name from resumeSummary.
+    - Ensure it is polished, professional, well-structured, and ready to send as a primary LinkedIn referral message — free of markdown, bullet points, filler text, or placeholders.
+    - If the post/job is not suitable for a direct message (or is_job_related is false), set linkedin_message_draft to null.
 
     The "reason" field must briefly state, in one sentence, why is_job_related was set to true or false, and if true, whether the author was found to be the direct hiring contact or not, and whether any email format instructions were detected.
 
@@ -142,6 +150,7 @@ function buildPrompt({ item, resumeSummary }) {
     "recruiter_emails": ["email@example.com"],
     "subject": "email subject or null",
     "message": "email body or null",
+    "linkedin_message_draft": "short linkedin message or null",
     "reason": "short reason for decision"
     }`;
 }
@@ -211,8 +220,10 @@ async function processAiParsingJob({ itemId }) {
         ai_mail: isJobRelated ? {
             subject: result.subject || null,
             message: result.message || null,
+            linkedin_message_draft: result.linkedin_message_draft || null,
             reason: result.reason || null
         } : null,
+        linkedin_message_draft: isJobRelated ? (result.linkedin_message_draft || null) : null,
         ai_status: 'completed',
         is_job_related: isJobRelated,
         // Store as JSON array string so existing text column holds multiple emails
