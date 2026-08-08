@@ -161,8 +161,6 @@ async function callGroqForMail({ item, resumeSummary }) {
         body: JSON.stringify({
             model: groqModel,
             temperature: 0.1,
-            // Disable Qwen3 thinking mode — it over-analyzes classification and causes wrong is_job_related results
-            thinking: { type: 'disabled' },
             response_format: { type: 'json_object' },
             messages: [
                 {
