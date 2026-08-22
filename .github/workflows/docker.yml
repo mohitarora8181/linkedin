@@ -1,0 +1,44 @@
+name: Build, Push and Deploy
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/linkerin:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/linkerin:${{ github.sha }} \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/linkerin:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/linkerin:${{ github.sha }}
+
+      - name: Deploy to Oracle VM
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd /opt/barosphere/backend
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/linkerin:latest
+            docker compose up -d
+            docker image prune -f

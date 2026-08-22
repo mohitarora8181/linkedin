@@ -1,5 +1,6 @@
-const { getSupabase } = require('../config/supabase');
+const { getDatabase } = require('../config/database');
 const { queueAiParsing } = require('../services/ai-queue.service');
+const { mapItem } = require('../utils/database');
 const logger = require('../utils/logger');
 
 async function repushAi(req, res, next) {
@@ -13,14 +14,8 @@ async function repushAi(req, res, next) {
     }
 
     try {
-        const supabase = getSupabase();
-        const { data: item, error } = await supabase
-            .from('linkerin_items')
-            .select('id, item_type, user_id')
-            .eq('id', itemId)
-            .maybeSingle();
-
-        if (error) throw error;
+        const [rows] = await getDatabase().execute('SELECT id, item_type, user_id FROM linkerin_items WHERE id = ? AND user_id = ?', [itemId, req.user.id]);
+        const item = rows[0];
 
         if (!item) {
             return res.status(404).json({
@@ -31,9 +26,11 @@ async function repushAi(req, res, next) {
 
         logger.info(`Manually repushing item ${itemId} to AI parsing queue`);
         await queueAiParsing(item);
+        const [updatedRows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]);
 
         return res.json({
             success: true,
+            item: mapItem(updatedRows[0]),
             message: `Successfully queued AI parsing job for item ${itemId}`
         });
     } catch (err) {

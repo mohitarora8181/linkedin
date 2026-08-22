@@ -1,12 +1,8 @@
 const { groqApiKey, groqModel } = require('../config/env');
-const { getSupabase } = require('../config/supabase');
+const { getDatabase } = require('../config/database');
+const { mapItem, mapProfile, serializeJson } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
 const logger = require('../utils/logger');
-
-function throwSupabaseError(error, action) {
-    if (!error) return;
-    throw new HttpError(500, `Supabase failed while ${action}.`, { supabaseMessage: error.message, code: error.code });
-}
 
 function parseJsonFromText(text) {
     const cleaned = String(text || '')
@@ -25,42 +21,24 @@ function parseJsonFromText(text) {
 }
 
 async function getItem(itemId) {
-    const { data, error } = await getSupabase()
-        .from('linkerin_items')
-        .select('*')
-        .eq('id', itemId)
-        .maybeSingle();
-
-    throwSupabaseError(error, 'loading item for AI parsing');
+    const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]);
+    const data = mapItem(rows[0]);
     if (!data) throw new Error(`AI item not found: ${itemId}`);
     return data;
 }
 
 async function getResumeSummary(userId) {
-    const { data, error } = await getSupabase()
-        .from('linkerin_user_profiles')
-        .select('resume_summary')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-    throwSupabaseError(error, 'loading resume profile for AI parsing');
+    const [rows] = await getDatabase().execute('SELECT resume_summary FROM linkerin_user_profiles WHERE user_id = ?', [userId]);
+    const data = mapProfile(rows[0]);
     return data?.resume_summary ?? null;
 }
 
 async function updateAiFields(itemId, values) {
-    const { data, error } = await getSupabase()
-        .from('linkerin_items')
-        .update({
-            ...values,
-            ai_updated_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', itemId)
-        .select()
-        .single();
-
-    throwSupabaseError(error, 'updating AI mail content');
-    return data;
+    const normalized = { ...values };
+    if (Object.hasOwn(normalized, 'ai_mail')) normalized.ai_mail = serializeJson(normalized.ai_mail);
+    const fields = Object.keys(normalized);
+    await getDatabase().execute(`UPDATE linkerin_items SET ${fields.map((field) => `${field} = ?`).join(', ')}, ai_updated_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [...fields.map((field) => normalized[field]), itemId]);
+    return getItem(itemId);
 }
 
 async function markAiQueued({ itemId }) {
@@ -81,7 +59,7 @@ async function markAiFailed({ errorMessage, itemId }) {
     });
 }
 
-function buildPrompt({ item, resumeSummary }) {
+function buildVerbosePrompt({ item, resumeSummary }) {
     return `You are generating a ready-to-send email draft for a LinkedIn opportunity. The output will be sent as-is with no manual editing, so it must be complete, accurate, and free of any placeholder or filler text.
 
     Candidate resume summary JSON:
@@ -155,38 +133,164 @@ function buildPrompt({ item, resumeSummary }) {
     }`;
 }
 
+function truncateText(value, maxLength) {
+    const text = String(value ?? '').trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength)}\n[truncated]` : text;
+}
+
+function compactValue(value, { maxArrayLength = 8, maxObjectKeys = 20, maxStringLength = 900 } = {}, depth = 0) {
+    if (value === null || value === undefined || typeof value !== 'object') {
+        return typeof value === 'string' ? truncateText(value, maxStringLength) : value;
+    }
+
+    if (depth > 4) return '[nested data omitted]';
+    if (Array.isArray(value)) return value.slice(0, maxArrayLength).map((entry) => compactValue(entry, { maxArrayLength, maxObjectKeys, maxStringLength }, depth + 1));
+
+    return Object.fromEntries(
+        Object.entries(value)
+            .slice(0, maxObjectKeys)
+            .map(([key, entry]) => [key, compactValue(entry, { maxArrayLength, maxObjectKeys, maxStringLength }, depth + 1)])
+    );
+}
+
+function compactItemContent(item) {
+    const content = item.content || {};
+    if (item.item_type === 'post') {
+        return {
+            author: compactValue(content.author, { maxStringLength: 300 }),
+            content: truncateText(content.content, 7000),
+            comments: (content.comments || []).slice(0, 10).map((comment) => ({
+                author: truncateText(comment?.author, 160),
+                content: truncateText(comment?.content, 700),
+                url: truncateText(comment?.url, 300)
+            }))
+        };
+    }
+
+    return {
+        title: truncateText(content.title, 500),
+        company: compactValue(content.company, { maxStringLength: 300 }),
+        location: truncateText(content.location, 300),
+        description: truncateText(content.description, 7000),
+        recruiter: compactValue(content.recruiter, { maxStringLength: 300 }),
+        additional_details: compactValue(content.additional_details, { maxStringLength: 400 })
+    };
+}
+
+function collectEmailCandidates(item) {
+    const candidates = [];
+    const seen = new Set();
+    const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+    function collect(text, source) {
+        for (const match of String(text || '').matchAll(emailPattern)) {
+            const email = match[0].toLowerCase();
+            if (!seen.has(email)) {
+                seen.add(email);
+                candidates.push({ email, source });
+            }
+        }
+    }
+
+    const content = item.content || {};
+    if (item.item_type === 'post') {
+        collect(content.content, 'post body');
+        for (const comment of content.comments || []) {
+            collect(comment?.content, `comment by ${truncateText(comment?.author, 80) || 'unknown user'}`);
+        }
+    } else {
+        collect(content.description, 'job description');
+        collect(content.recruiter?.email, 'recruiter profile');
+    }
+
+    return candidates.slice(0, 20);
+}
+
+function toBoundedJson(value, maxCharacters) {
+    const serialized = JSON.stringify(value);
+    if (serialized.length <= maxCharacters) return serialized;
+
+    return JSON.stringify({
+        truncated: true,
+        excerpt: serialized.slice(0, Math.max(0, maxCharacters - 80))
+    });
+}
+
+function buildPrompt({ item, resumeSummary, emailCandidates }) {
+    const compactResume = compactValue(resumeSummary, { maxArrayLength: 6, maxObjectKeys: 18, maxStringLength: 900 });
+    const compactContent = compactItemContent(item);
+    const resumeJson = toBoundedJson(compactResume, 7500);
+    const contentJson = toBoundedJson(compactContent, 11000);
+
+    return `Generate a finished email draft and an optional LinkedIn outreach message for this LinkedIn opportunity. Use only the supplied data. Never invent facts, names, skills, links, or emails. Return JSON only.
+
+Opportunity type: ${item.item_type}
+Opportunity data: ${contentJson}
+Candidate resume: ${resumeJson}
+Email candidates found in the source: ${JSON.stringify(emailCandidates)}
+
+Rules:
+1. A job item is job-related. For a post, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
+2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email.
+3. Decide whether the author is the direct hiring contact. Mention that briefly in reason.
+4. Use only the most relevant 1-2 roles, one project at most, and 3-6 skills from the resume. Respect explicit subject/body format instructions found in the opportunity.
+5. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
+6. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; otherwise use null.
+
+Return exactly this JSON shape:
+{"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;
+}
+
 async function callGroqForMail({ item, resumeSummary }) {
     if (!groqApiKey) {
         throw new HttpError(500, 'Groq API key is not configured.');
     }
 
-    logger.info(`Sending request to Groq API for item ${item.id}`, { model: groqModel });
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${groqApiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: groqModel,
-            temperature: 0.1,
-            response_format: { type: 'json_object' },
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are a strict JSON-generation engine for recruiting email drafts. You always follow the instructions in the user message exactly. You never output markdown, code fences, explanations, or reasoning text — only the raw JSON object requested. If you would normally show your thinking, suppress it entirely and go straight to the final JSON.'
-                },
-                { role: 'user', content: buildPrompt({ item, resumeSummary }) }
-            ]
-        })
-    });
+    const emailCandidates = collectEmailCandidates(item);
+    const prompt = buildPrompt({ item, resumeSummary, emailCandidates });
+    logger.info(`Sending request to Groq API for item ${item.id}`, { model: groqModel, promptCharacters: prompt.length, emailCandidates: emailCandidates.length });
+    const requestBody = {
+        model: groqModel,
+        max_completion_tokens: 900,
+        reasoning_effort: 'low',
+        reasoning_format: 'hidden',
+        temperature: 0.1,
+        messages: [{ role: 'user', content: prompt }]
+    };
 
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-        throw new HttpError(502, payload?.error?.message || 'Groq mail generation failed.');
+    async function send(body) {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${groqApiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+        return { response, payload: await response.json().catch(() => null) };
     }
 
-    return parseJsonFromText(payload?.choices?.[0]?.message?.content);
+    const { response, payload } = await send(requestBody);
+
+    if (!response.ok) {
+        logger.error(
+            `Groq mail generation failed for item ${item.id}`,
+            new Error(payload?.error?.message || 'Groq mail generation failed.'),
+            { failedGeneration: payload?.error?.failed_generation }
+        );
+        throw new HttpError(502, payload?.error?.message || 'Groq mail generation failed.', {
+            failedGeneration: payload?.error?.failed_generation
+        });
+    }
+
+    const result = parseJsonFromText(payload?.choices?.[0]?.message?.content);
+    const allowedEmails = new Set(emailCandidates.map((candidate) => candidate.email));
+    const selectedEmails = Array.isArray(result.recruiter_emails) ? result.recruiter_emails : [];
+
+    return {
+        ...result,
+        recruiter_emails: [...new Set(selectedEmails.map((email) => String(email).trim().toLowerCase()).filter((email) => allowedEmails.has(email)))]
+    };
 }
 
 async function processAiParsingJob({ itemId }) {

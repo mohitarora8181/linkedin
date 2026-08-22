@@ -4,16 +4,20 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/index.js",
+    "db:init": "node src/scripts/init-database.js",
+    "db:check-items": "node src/scripts/verify-items-query.js",
     "worker:ai": "node src/workers/ai.worker.js",
     "worker:scrape": "node src/workers/scrape.worker.js",
     "postinstall": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.109.0",
     "amqplib": "^2.0.1",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
+    "google-auth-library": "^10.9.1",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
+    "mysql2": "^3.23.3",
     "puppeteer": "^23.11.1"
   }
 }

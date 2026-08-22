@@ -1,6 +1,7 @@
 const app = require('./app');
 const env = require('./config/env');
 const logger = require('./utils/logger');
+const { initializeDatabase } = require('./config/database');
 const { startAiWorker } = require('./workers/ai.worker');
 const { startWorker: startScrapeWorker } = require('./workers/scrape.worker');
 
@@ -30,7 +31,15 @@ async function startBackgroundWorkers() {
     }
 }
 
-app.listen(env.port, () => {
-    logger.info(`LinkerIn backend running on http://localhost:${env.port}`);
-    startBackgroundWorkers();
+async function start() {
+    await initializeDatabase();
+    app.listen(env.port, () => {
+        logger.info(`LinkerIn backend running on http://localhost:${env.port}`);
+        startBackgroundWorkers();
+    });
+}
+
+start().catch((error) => {
+    logger.error('Unable to initialize MySQL database', error);
+    process.exit(1);
 });

@@ -1,5 +1,5 @@
 const { getConnection } = require('../config/rabbitmq');
-const { getSupabase } = require('../config/supabase');
+const { getDatabase } = require('../config/database');
 
 async function getHealth(req, res, next) {
     try {
@@ -11,7 +11,7 @@ async function getHealth(req, res, next) {
             services: {
                 express: 'up',
                 rabbitmq: 'down',
-                supabase: 'down'
+                mysql: 'down'
             }
         };
 
@@ -26,17 +26,11 @@ async function getHealth(req, res, next) {
         }
 
         try {
-            const supabase = getSupabase();
-            const { error } = await supabase.from('linkerin_items').select('id').limit(1);
-            if (!error) {
-                health.services.supabase = 'connected';
-            } else {
-                health.status = 'degraded';
-                health.services.supabase = `error: ${error.message}`;
-            }
+            await getDatabase().query('SELECT 1');
+            health.services.mysql = 'connected';
         } catch (err) {
             health.status = 'degraded';
-            health.services.supabase = `error: ${err.message}`;
+            health.services.mysql = `error: ${err.message}`;
         }
 
         const statusCode = health.status === 'healthy' ? 200 : 503;

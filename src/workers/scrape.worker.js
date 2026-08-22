@@ -1,5 +1,5 @@
 const { createChannel, onReconnect, rabbitMqQueue } = require('../config/rabbitmq');
-const { getSupabase } = require('../config/supabase');
+const { getDatabase, initializeDatabase } = require('../config/database');
 const { scrapeLinkedInUrl } = require('../services/scrape.service');
 const { queueAiParsing } = require('../services/ai-queue.service');
 const env = require('../config/env');
@@ -30,20 +30,10 @@ function searchableFieldsForItem({ content, itemType }) {
 
 async function markItemFailed({ itemId, errorMessage }) {
     try {
-        const supabase = getSupabase();
-        const { error } = await supabase
-            .from('linkerin_items')
-            .update({
-                is_pending: false,
-                scrape_error: errorMessage,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', itemId);
-
-        if (error) throw error;
+        await getDatabase().execute('UPDATE linkerin_items SET is_pending = FALSE, scrape_error = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [errorMessage, itemId]);
         logger.info(`Marked item ${itemId} as failed in database`, { errorMessage });
     } catch (err) {
-        logger.error(`Failed to mark item ${itemId} as failed in Supabase`, err);
+        logger.error(`Failed to mark item ${itemId} as failed in MySQL`, err);
         throw err;
     }
 }
@@ -64,8 +54,6 @@ async function handleMessage(channel, message) {
             return;
         }
 
-        const supabase = getSupabase();
-
         // 1. Perform scraping (no read DB query needed, parameters are in job payload!)
         let content = null;
         let scrapeError = null;
@@ -83,20 +71,10 @@ async function handleMessage(channel, message) {
         }
 
         // 2. Update database directly
-        const { data: updatedItem, error: updateError } = await supabase
-            .from('linkerin_items')
-            .update({
-                content,
-                is_pending: false,
-                scrape_error: null,
-                updated_at: new Date().toISOString(),
-                ...searchableFieldsForItem({ content, itemType })
-            })
-            .eq('id', itemId)
-            .select()
-            .single();
-
-        if (updateError) throw updateError;
+        const fields = searchableFieldsForItem({ content, itemType });
+        await getDatabase().execute('UPDATE linkerin_items SET content = ?, is_pending = FALSE, scrape_error = NULL, author_name = ?, post_content = ?, job_title = ?, company_name = ?, location = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [JSON.stringify(content), ...Object.values(fields), itemId]);
+        const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]);
+        const updatedItem = rows[0];
         logger.info(`Successfully scraped and updated item ${itemId}`);
 
         // 3. Queue AI job directly
@@ -125,6 +103,7 @@ async function handleMessage(channel, message) {
 
 async function startWorker() {
     try {
+        await initializeDatabase();
         logger.info('Initializing scrape worker channel...');
         isConsuming = false;
         

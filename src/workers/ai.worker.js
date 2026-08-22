@@ -1,6 +1,7 @@
 const { rabbitMqAiQueue } = require('../config/env');
 const { createChannel, onReconnect } = require('../config/rabbitmq');
 const { markAiFailed, processAiParsingJob } = require('../services/ai.service');
+const { initializeDatabase } = require('../config/database');
 const logger = require('../utils/logger');
 
 let workerChannel = null;
@@ -46,6 +47,7 @@ async function handleMessage(channel, message) {
 
 async function startAiWorker() {
     try {
+        await initializeDatabase();
         logger.info('Initializing AI worker channel...');
         isConsuming = false;
 
