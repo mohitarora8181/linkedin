@@ -1,6 +1,6 @@
 services:
   api:
-    image: ${LINKERIN_IMAGE:?Set LINKERIN_IMAGE to your Docker Hub image, for example username/linkerin-api:latest}
+    image: mohitarroa8181/linkerin:latest
     container_name: linkerin-api
     pull_policy: always
     env_file:
