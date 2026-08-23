@@ -26,6 +26,15 @@ const BLOCKED_URL_PATTERNS = [
     "segment.io"
 ];
 
+function isPermittedLinkedInNavigation(url) {
+    try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host === 'lnkd.in' || host === 'www.lnkd.in' || host === 'linkedin.com' || host.endsWith('.linkedin.com');
+    } catch {
+        return false;
+    }
+}
+
 let browser = null;
 let browserPromise = null;
 let shutdownHandlersInstalled = false;
@@ -310,4 +319,33 @@ async function scrapeLinkedInJob(jobUrl) {
     });
 }
 
-module.exports = { scrapeLinkedInPost, scrapeLinkedInJob };
+async function resolveLinkedInShortUrl(shortUrl) {
+    const activeBrowser = await getBrowser();
+    const page = await activeBrowser.newPage();
+    let requestHandler = null;
+
+    activeBrowser.activePagesCount++;
+    activeBrowser.pagesOpenedCount++;
+
+    try {
+        requestHandler = await configurePage(page);
+        const protectRedirect = request => {
+            if (request.isNavigationRequest() && !isPermittedLinkedInNavigation(request.url())) {
+                request.abort();
+            }
+        };
+        page.on('request', protectRedirect);
+        await page.goto(shortUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+        const resolvedUrl = page.url();
+        if (!isPermittedLinkedInNavigation(resolvedUrl) || /(^|\.)lnkd\.in$/i.test(new URL(resolvedUrl).hostname)) {
+            throw new Error('LinkedIn short URL did not resolve to a LinkedIn page.');
+        }
+        return resolvedUrl;
+    } finally {
+        if (requestHandler) page.off('request', requestHandler);
+        if (!page.isClosed()) await page.close();
+        activeBrowser.activePagesCount--;
+    }
+}
+
+module.exports = { resolveLinkedInShortUrl, scrapeLinkedInPost, scrapeLinkedInJob };

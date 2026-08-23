@@ -1,0 +1,16 @@
+services:
+  api:
+    image: ${LINKERIN_IMAGE:?Set LINKERIN_IMAGE to your Docker Hub image, for example username/linkerin-api:latest}
+    container_name: linkerin-api
+    pull_policy: always
+    env_file:
+      - path: ./.env
+        required: true
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

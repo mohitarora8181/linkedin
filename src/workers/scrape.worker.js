@@ -2,6 +2,7 @@ const { createChannel, onReconnect, rabbitMqQueue } = require('../config/rabbitm
 const { getDatabase, initializeDatabase } = require('../config/database');
 const { scrapeLinkedInUrl } = require('../services/scrape.service');
 const { queueAiParsing } = require('../services/ai-queue.service');
+const { hashSourceUrl } = require('../utils/database');
 const env = require('../config/env');
 const logger = require('../utils/logger');
 
@@ -56,10 +57,15 @@ async function handleMessage(channel, message) {
 
         // 1. Perform scraping (no read DB query needed, parameters are in job payload!)
         let content = null;
+        let resolvedItemType = itemType;
+        let resolvedSourceUrl = sourceUrl;
         let scrapeError = null;
 
         try {
-            content = await scrapeLinkedInUrl(sourceUrl);
+            const result = await scrapeLinkedInUrl(sourceUrl);
+            content = result.content;
+            resolvedItemType = result.itemType;
+            resolvedSourceUrl = result.sourceUrl;
         } catch (err) {
             scrapeError = err.message || 'Scraping failed';
         }
@@ -71,8 +77,8 @@ async function handleMessage(channel, message) {
         }
 
         // 2. Update database directly
-        const fields = searchableFieldsForItem({ content, itemType });
-        await getDatabase().execute('UPDATE linkerin_items SET content = ?, is_pending = FALSE, scrape_error = NULL, author_name = ?, post_content = ?, job_title = ?, company_name = ?, location = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [JSON.stringify(content), ...Object.values(fields), itemId]);
+        const fields = searchableFieldsForItem({ content, itemType: resolvedItemType });
+        await getDatabase().execute('UPDATE linkerin_items SET source_url = ?, source_url_hash = ?, item_type = ?, content = ?, is_pending = FALSE, scrape_error = NULL, author_name = ?, post_content = ?, job_title = ?, company_name = ?, location = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [resolvedSourceUrl, hashSourceUrl(resolvedSourceUrl), resolvedItemType, JSON.stringify(content), ...Object.values(fields), itemId]);
         const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]);
         const updatedItem = rows[0];
         logger.info(`Successfully scraped and updated item ${itemId}`);

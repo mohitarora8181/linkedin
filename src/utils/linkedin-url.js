@@ -1,8 +1,17 @@
 function extractLinkedInUrl(value) {
-    const trimmed = String(value || "").trim();
-    const match = trimmed.match(/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/[^\s]+/i);
+    const trimmed = String(value || '').trim();
+    const match = trimmed.match(/https?:\/\/(?:(?:[a-z]{2,3}\.)?linkedin\.com|(?:www\.)?lnkd\.in)\/[^\s]+/i);
 
-    return match?.[0] || (trimmed.includes("linkedin.com") ? trimmed : "");
+    return match?.[0] || '';
+}
+
+function isLinkedInShortUrl(url) {
+    try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host === 'lnkd.in' || host === 'www.lnkd.in';
+    } catch {
+        return false;
+    }
 }
 
 function getLinkedInItemType(url) {
@@ -15,4 +24,4 @@ function getLinkedInItemType(url) {
     return "post";
 }
 
-module.exports = { extractLinkedInUrl, getLinkedInItemType };
+module.exports = { extractLinkedInUrl, getLinkedInItemType, isLinkedInShortUrl };
