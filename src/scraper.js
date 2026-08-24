@@ -241,7 +241,7 @@ async function scrapeLinkedInPost(postUrl) {
     return scrapeWithPage({
         label: "LinkedIn post",
         url: postUrl,
-        waitForSelector: "[data-test-id='main-feed-activity-card__commentary']",
+        waitForSelector: "section > .container-lined",
         evaluate: () => {
             const $ = (selector, parent = document) => parent.querySelector(selector);
             const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
@@ -255,9 +255,9 @@ async function scrapeLinkedInPost(postUrl) {
                     name: text("[data-test-id='main-feed-activity-card__entity-lockup'] div a"),
                     href: href("[data-test-id='main-feed-activity-card__entity-lockup'] div a")?.split("?")[0]
                 },
-                content: text("[data-test-id='main-feed-activity-card__commentary']"),
+                content: text("section > .container-lined > div > p"),
                 totalLikes: text("[data-test-id='social-actions__reaction-count']"),
-                mentions: $$("[data-test-id='main-feed-activity-card__commentary'] > a")
+                mentions: $$("section > .container-lined > div > p > a")
                     .map(anchor => ({
                         url: anchor.href?.split("?")[0],
                         content: anchor.innerText.trim()
