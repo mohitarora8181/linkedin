@@ -3,13 +3,9 @@ FROM node:20-bookworm-slim
 ENV NODE_ENV=production \
     PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
-
 WORKDIR /app
 
-# Chromium is downloaded by Puppeteer's postinstall script; these packages are
-# the runtime libraries it needs when the scraper opens a browser.
+# Install standard dependencies required to execute Chrome headlessly
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -41,6 +37,8 @@ RUN apt-get update \
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+
+RUN npx puppeteer browsers install chrome
 
 COPY src ./src
 COPY api ./api
