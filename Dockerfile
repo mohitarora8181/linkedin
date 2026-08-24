@@ -3,6 +3,9 @@ FROM node:20-bookworm-slim
 ENV NODE_ENV=production \
     PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+
 WORKDIR /app
 
 # Chromium is downloaded by Puppeteer's postinstall script; these packages are
