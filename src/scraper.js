@@ -241,29 +241,36 @@ async function scrapeLinkedInPost(postUrl) {
     return scrapeWithPage({
         label: "LinkedIn post",
         url: postUrl,
-        waitForSelector: "section > .container-lined",
+        // Public post pages now use an article card. The old selector expected
+        // a container-lined element directly below a section, which LinkedIn no
+        // longer renders.
+        waitForSelector: "article.main-feed-activity-card, [data-test-id='main-feed-activity-card__commentary']",
         evaluate: () => {
             const $ = (selector, parent = document) => parent.querySelector(selector);
             const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
             const text = (selector, parent = document) => $(selector, parent)?.innerText.trim() ?? null;
             const href = (selector, parent = document) => $(selector, parent)?.href ?? null;
             const src = (selector, parent = document) => $(selector, parent)?.src ?? null;
+            const card = $("article.main-feed-activity-card")
+                ?? $("[data-test-id='main-feed-activity-card__commentary']")?.closest("article")
+                ?? document;
+            const commentarySelector = "[data-test-id='main-feed-activity-card__commentary'], .attributed-text-segment-list__content";
 
             return {
                 author: {
-                    icon: src("[data-test-id='main-feed-activity-card__entity-lockup'] img"),
-                    name: text("[data-test-id='main-feed-activity-card__entity-lockup'] div a"),
-                    href: href("[data-test-id='main-feed-activity-card__entity-lockup'] div a")?.split("?")[0]
+                    icon: src("[data-test-id='main-feed-activity-card__entity-lockup'] img", card),
+                    name: text("[data-tracking-control-name='public_post_feed-actor-name']", card),
+                    href: href("[data-tracking-control-name='public_post_feed-actor-name']", card)?.split("?")[0]
                 },
-                content: text("section > .container-lined > div > p"),
-                totalLikes: text("[data-test-id='social-actions__reaction-count']"),
-                mentions: $$("section > .container-lined > div > p > a")
+                content: text(commentarySelector, card),
+                totalLikes: text("[data-test-id='social-actions__reaction-count']", card),
+                mentions: $$(`${commentarySelector} a`, card)
                     .map(anchor => ({
                         url: anchor.href?.split("?")[0],
                         content: anchor.innerText.trim()
                     }))
                     .filter(mention => !mention.content?.includes("lnkd.in")),
-                comments: $$("section .comment").map(comment => ({
+                comments: $$("section.comment, .comment").map(comment => ({
                     author: text("[data-tracking-control-name='public_post_comment_actor-name']", comment),
                     content: text("p", comment),
                     url: href(".comment__header > a", comment)?.split("?")[0] ?? null
