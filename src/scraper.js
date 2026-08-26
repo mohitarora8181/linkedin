@@ -161,6 +161,51 @@ async function configurePage(page) {
     return handleRequest;
 }
 
+async function getPageDiagnostics(page, response) {
+    try {
+        const pageData = await page.evaluate(() => ({
+            bodyText: document.body?.innerText?.slice(0, 2000) ?? "",
+            title: document.title ?? ""
+        }));
+
+        return {
+            finalUrl: page.url(),
+            responseStatus: response?.status?.() ?? null,
+            title: pageData.title,
+            bodyText: pageData.bodyText.replace(/\s+/g, " ").trim()
+        };
+    } catch {
+        return {
+            finalUrl: page.url(),
+            responseStatus: response?.status?.() ?? null
+        };
+    }
+}
+
+function getLinkedInAccessError(diagnostics) {
+    const finalUrl = diagnostics.finalUrl?.toLowerCase() ?? "";
+    const pageText = `${diagnostics.title ?? ""} ${diagnostics.bodyText ?? ""}`.toLowerCase();
+
+    if (
+        finalUrl.includes("/login") ||
+        finalUrl.includes("/authwall") ||
+        finalUrl.includes("/checkpoint") ||
+        /captcha|security verification|unusual activity|verify you are human/.test(pageText)
+    ) {
+        return "LinkedIn returned an access verification or sign-in page. The server IP may be rate-limited or blocked; retry later or use an authorized LinkedIn data source.";
+    }
+
+    if (/this post is unavailable|content is not available|page not found|404/.test(pageText) || diagnostics.responseStatus === 404) {
+        return "This LinkedIn post is unavailable, private, or has been removed.";
+    }
+
+    if (diagnostics.responseStatus === 403 || diagnostics.responseStatus === 429) {
+        return "LinkedIn denied this request from the server. The server IP may be rate-limited or blocked; retry later or use an authorized LinkedIn data source.";
+    }
+
+    return null;
+}
+
 async function scrapeWithPage({
     label,
     url,
@@ -170,6 +215,7 @@ async function scrapeWithPage({
     const activeBrowser = await getBrowser();
     const page = await activeBrowser.newPage();
     let requestHandler = null;
+    let navigationResponse = null;
 
     activeBrowser.activePagesCount++;
     activeBrowser.pagesOpenedCount++;
@@ -183,7 +229,7 @@ async function scrapeWithPage({
         requestHandler = await configurePage(page);
 
         logger.info(`Navigating to URL: ${url}`, { label });
-        await page.goto(url, {
+        navigationResponse = await page.goto(url, {
             waitUntil: "domcontentloaded",
             timeout: NAVIGATION_TIMEOUT_MS
         });
@@ -197,7 +243,19 @@ async function scrapeWithPage({
         logger.info("Evaluating scraping functions on page content", { label });
         return await page.evaluate(evaluate);
     } catch (error) {
-        logger.error(`${label} scrape failed`, error, { url });
+        const diagnostics = await getPageDiagnostics(page, navigationResponse);
+        const accessError = getLinkedInAccessError(diagnostics);
+
+        logger.error(`${label} scrape failed`, error, {
+            ...diagnostics,
+            accessError,
+            url
+        });
+
+        if (accessError) {
+            throw new Error(accessError, { cause: error });
+        }
+
         throw error;
     } finally {
         if (requestHandler) {
