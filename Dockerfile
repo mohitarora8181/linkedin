@@ -1,8 +1,7 @@
 FROM node:20-bookworm-slim
 
 ENV NODE_ENV=production \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+    PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 
 WORKDIR /app
 
@@ -38,6 +37,8 @@ RUN apt-get update \
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+
+RUN npx puppeteer browsers install chrome
 
 COPY src ./src
 COPY api ./api
