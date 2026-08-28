@@ -75,8 +75,6 @@ async function launchBrowser() {
             "--disable-extensions",
             "--mute-audio",
             "--disable-gpu",
-            "--blink-settings=imagesEnabled=false",
-            '--single-process' 
         ]
     });
 
