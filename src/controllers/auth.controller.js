@@ -1,7 +1,7 @@
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const { randomUUID } = require('crypto');
-const { googleClientId, googleClientSecret, googleRedirectUri, googleOauthSuccessUrl, jwtSecret } = require('../config/env');
+const { googleClientId, googleClientSecret, googleRedirectUri, googleOauthSuccessUrl, googleOauthWebSuccessUrls, jwtSecret } = require('../config/env');
 const { getDatabase } = require('../config/database');
 const { newId } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
@@ -14,7 +14,10 @@ function getAppCallbackUrl(value) {
 
     try {
         const requested = new URL(value);
-        const isExpectedCallback = requested.protocol === 'linkerin:' && requested.hostname === 'auth' && requested.pathname === '/callback';
+        const isMobileCallback = requested.protocol === 'linkerin:' && requested.hostname === 'auth' && requested.pathname === '/callback';
+        const isWebCallback = (requested.protocol === 'http:' || requested.protocol === 'https:')
+            && googleOauthWebSuccessUrls.includes(requested.toString().replace(/\/$/, ''));
+        const isExpectedCallback = isMobileCallback || isWebCallback;
         return isExpectedCallback ? requested.toString() : fallback.toString();
     } catch {
         return fallback.toString();

@@ -5,6 +5,7 @@ const isServerless = Boolean(process.env.VERCEL);
 const env = {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: process.env.PORT || 3000,
+    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:8081,http://localhost:19006,http://localhost:3000').split(',').map((value) => value.trim().replace(/\/$/, '')).filter(Boolean),
     rabbitMqExchange: process.env.RABBITMQ_EXCHANGE || 'linkerin.scrape',
     rabbitMqQueue: process.env.RABBITMQ_QUEUE || 'linkerin.scrape.jobs',
     rabbitMqAiQueue: process.env.RABBITMQ_AI_QUEUE || 'groq_ai_parsing',
@@ -19,6 +20,7 @@ const env = {
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI,
     googleOauthSuccessUrl: process.env.GOOGLE_OAUTH_SUCCESS_URL,
+    googleOauthWebSuccessUrls: (process.env.GOOGLE_OAUTH_WEB_SUCCESS_URLS || '').split(',').map((value) => value.trim()).filter(Boolean),
     jwtSecret: process.env.JWT_SECRET,
     groqApiKey: process.env.GROQ_API_KEY,
     groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
