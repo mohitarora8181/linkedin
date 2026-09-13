@@ -9,6 +9,7 @@ const env = {
     rabbitMqExchange: process.env.RABBITMQ_EXCHANGE || 'linkerin.scrape',
     rabbitMqQueue: process.env.RABBITMQ_QUEUE || 'linkerin.scrape.jobs',
     rabbitMqAiQueue: process.env.RABBITMQ_AI_QUEUE || 'groq_ai_parsing',
+    rabbitMqGmailQueue: process.env.RABBITMQ_GMAIL_QUEUE || 'linkerin.gmail.send',
     rabbitMqUrl: process.env.RABBITMQ_URL,
     mysqlHost: process.env.MYSQL_HOST,
     mysqlPort: parseInt(process.env.MYSQL_PORT || '3306', 10),
@@ -19,8 +20,10 @@ const env = {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI,
+    googleGmailRedirectUri: process.env.GOOGLE_GMAIL_REDIRECT_URI,
     googleOauthSuccessUrl: process.env.GOOGLE_OAUTH_SUCCESS_URL,
     googleOauthWebSuccessUrls: (process.env.GOOGLE_OAUTH_WEB_SUCCESS_URLS || '').split(',').map((value) => value.trim()).filter(Boolean),
+    gmailTokenEncryptionKey: process.env.GMAIL_TOKEN_ENCRYPTION_KEY,
     jwtSecret: process.env.JWT_SECRET,
     groqApiKey: process.env.GROQ_API_KEY,
     groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
@@ -29,6 +32,8 @@ const env = {
     scrapeConcurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10),
     enableScrapeWorker: !isServerless && process.env.ENABLE_SCRAPE_WORKER !== 'false',
     enableAiWorker: !isServerless && process.env.ENABLE_AI_WORKER !== 'false'
+    ,
+    enableGmailWorker: !isServerless && process.env.ENABLE_GMAIL_WORKER !== 'false'
 };
 
 function validateEnv() {
@@ -41,6 +46,8 @@ function validateEnv() {
         'GOOGLE_CLIENT_ID',
         'GOOGLE_CLIENT_SECRET',
         'GOOGLE_REDIRECT_URI',
+        'GOOGLE_GMAIL_REDIRECT_URI',
+        'GMAIL_TOKEN_ENCRYPTION_KEY',
         'JWT_SECRET',
         'GEMINI_API_KEY',
         'GROQ_API_KEY'

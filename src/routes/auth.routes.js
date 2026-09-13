@@ -1,6 +1,11 @@
 const { Router } = require('express');
-const { googleCallback, startGoogleLogin } = require('../controllers/auth.controller');
+const { gmailCallback, googleCallback, startGmailAuthorization, startGoogleLogin } = require('../controllers/auth.controller');
+const { getGmailStatus } = require('../controllers/gmail.controller');
+const { requireUser } = require('../middleware/auth');
 const router = Router();
 router.get('/auth/google', startGoogleLogin);
 router.get('/auth/google/callback', googleCallback);
+router.get('/auth/google/gmail/start', requireUser, startGmailAuthorization);
+router.get('/auth/google/gmail/callback', gmailCallback);
+router.get('/auth/google/gmail/status', requireUser, getGmailStatus);
 module.exports = router;

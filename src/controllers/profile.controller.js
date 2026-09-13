@@ -1,11 +1,14 @@
 const { getResumeProfileForUser, saveResumeProfile } = require('../services/profile.service');
+const { getGmailConnectionStatus } = require('../services/gmail.service');
 
 async function getResumeProfile(req, res, next) {
     try {
         const profile = await getResumeProfileForUser({ userId: req.user.id });
+        const gmail = await getGmailConnectionStatus({ email: req.user.email, userId: req.user.id });
         return res.json({
             success: true,
             hasResume: Boolean(profile?.resume_summary),
+            gmail,
             profile
         });
     } catch (err) {

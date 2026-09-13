@@ -222,7 +222,7 @@ function buildPrompt({ item, resumeSummary, emailCandidates }) {
     const resumeJson = toBoundedJson(compactResume, 7500);
     const contentJson = toBoundedJson(compactContent, 11000);
 
-    return `Generate a finished email draft and an optional LinkedIn outreach message for this LinkedIn opportunity. Use only the supplied data. Never invent facts, names, skills, links, or emails. Return JSON only.
+    return `Generate a finished email draft and an optional LinkedIn outreach message for this LinkedIn opportunity. Use only the supplied data. Never invent facts, names, skills, links, or emails. The candidate profile claims must be factually correct, traceable to the supplied resume, and written in natural human language. Return JSON only.
 
 Opportunity type: ${item.item_type}
 Opportunity data: ${contentJson}
@@ -233,9 +233,18 @@ Rules:
 1. A job item is job-related. For a post, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
 2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email.
 3. Decide whether the author is the direct hiring contact. Mention that briefly in reason.
-4. Use only the most relevant 1-2 roles, one project at most, and 3-6 skills from the resume. Respect explicit subject/body format instructions found in the opportunity.
+4. Candidate profile accuracy is mandatory:
+   - Every claim about the candidate's job title, employer, duration, achievement, project, technology, certification, education, contact detail, or seniority must be explicitly supported by the supplied resume. Do not infer, embellish, combine, or upgrade facts.
+   - Keep each achievement attached to its exact role, company, or project. Do not merge achievements from different roles into one sentence.
+   - Do not claim the candidate has experience with a requirement merely because it appears in the opportunity. Mention overlap only when the resume explicitly supports it.
+   - If the resume does not support a specific claim, omit it and use a truthful general statement instead. Never compensate for missing information with plausible-sounding details.
 5. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
-6. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; otherwise use null.
+6. Human readability is mandatory:
+   - Write like a thoughtful candidate, not an AI-generated template. Use clear, natural, professional language with varied sentence structure.
+   - Keep the message specific but not overloaded with technologies or resume facts. Select only the strongest relevant evidence.
+   - Avoid buzzword stacking, exaggerated claims, repetition, awkward phrases, generic filler, markdown, bullet points, and unexplained abbreviations.
+   - Ensure grammar, punctuation, capitalization, paragraph breaks, greeting, closing, and candidate name are correct. Read the complete draft once for coherence before returning it.
+7. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; otherwise use null.
 
 Return exactly this JSON shape:
 {"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;

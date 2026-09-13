@@ -31,6 +31,8 @@ const schemaStatements = [
         recruiter_email TEXT NULL,
         ai_updated_at DATETIME(3) NULL,
         mail_sent BOOLEAN NOT NULL DEFAULT FALSE,
+        mail_send_status ENUM('idle', 'queued', 'sent', 'failed') NOT NULL DEFAULT 'idle',
+        mail_send_error TEXT NULL,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_linkerin_items_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE,
@@ -49,12 +51,25 @@ const schemaStatements = [
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_linkerin_profiles_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS linkerin_gmail_connections (
+        id CHAR(36) PRIMARY KEY,
+        user_id CHAR(36) NOT NULL UNIQUE,
+        google_subject VARCHAR(255) NOT NULL,
+        gmail_email VARCHAR(320) NOT NULL,
+        encrypted_refresh_token TEXT NOT NULL,
+        granted_scopes TEXT NOT NULL,
+        connected_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_linkerin_gmail_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
     )`
 ];
 
 const columnMigrations = {
     linkerin_items: {
-        linkedin_message_draft: 'TEXT NULL'
+        linkedin_message_draft: 'TEXT NULL',
+        mail_send_status: "ENUM('idle', 'queued', 'sent', 'failed') NOT NULL DEFAULT 'idle'",
+        mail_send_error: 'TEXT NULL'
     }
 };
 

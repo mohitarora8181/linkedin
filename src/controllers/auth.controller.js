@@ -1,30 +1,58 @@
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const { randomUUID } = require('crypto');
-const { googleClientId, googleClientSecret, googleRedirectUri, googleOauthSuccessUrl, googleOauthWebSuccessUrls, jwtSecret } = require('../config/env');
+const {
+    googleClientId,
+    googleClientSecret,
+    googleGmailRedirectUri,
+    googleRedirectUri,
+    googleOauthSuccessUrl,
+    googleOauthWebSuccessUrls,
+    jwtSecret
+} = require('../config/env');
 const { getDatabase } = require('../config/database');
 const { newId } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
+const { encryptSecret } = require('../utils/secret');
 
-function client() { return new OAuth2Client(googleClientId, googleClientSecret, googleRedirectUri); }
-function getCookie(req, name) { const match = (req.headers.cookie || '').split(';').map((value) => value.trim()).find((value) => value.startsWith(`${name}=`)); return match ? decodeURIComponent(match.slice(name.length + 1)) : null; }
-function getAppCallbackUrl(value) {
-    const fallback = new URL(googleOauthSuccessUrl || 'linkerin://auth/callback');
+function client(redirectUri = googleRedirectUri) {
+    return new OAuth2Client(googleClientId, googleClientSecret, redirectUri);
+}
+
+function getCookie(req, name) {
+    const match = (req.headers.cookie || '').split(';').map((value) => value.trim()).find((value) => value.startsWith(`${name}=`));
+    return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function getAppCallbackUrl(value, callbackPath = '/auth/callback') {
+    const fallback = new URL(
+        callbackPath === '/auth/gmail-callback'
+            ? 'linkerin://auth/gmail-callback'
+            : (googleOauthSuccessUrl || 'linkerin://auth/callback')
+    );
     if (!value) return fallback.toString();
 
     try {
         const requested = new URL(value);
-        const isMobileCallback = requested.protocol === 'linkerin:' && requested.hostname === 'auth' && requested.pathname === '/callback';
-        const isWebCallback = (requested.protocol === 'http:' || requested.protocol === 'https:')
+        const mobilePath = callbackPath.replace(/^\/auth/, '') || '/callback';
+        const isMobile = requested.protocol === 'linkerin:' && requested.hostname === 'auth' && requested.pathname === mobilePath;
+        const isWeb = ['http:', 'https:'].includes(requested.protocol)
+            && requested.pathname === callbackPath
             && googleOauthWebSuccessUrls.includes(requested.toString().replace(/\/$/, ''));
-        const isExpectedCallback = isMobileCallback || isWebCallback;
-        return isExpectedCallback ? requested.toString() : fallback.toString();
+        return isMobile || isWeb ? requested.toString() : fallback.toString();
     } catch {
         return fallback.toString();
     }
 }
+
+function ensureOAuthConfig() {
+    if (!googleClientId || !googleClientSecret || !googleRedirectUri || !jwtSecret) {
+        throw new HttpError(500, 'Google OAuth is not configured.');
+    }
+}
+
 function startGoogleLogin(req, res) {
-    if (!googleClientId || !googleClientSecret || !googleRedirectUri || !jwtSecret) throw new HttpError(500, 'Google OAuth is not configured.');
+    ensureOAuthConfig();
     const returnTo = getAppCallbackUrl(req.query.returnTo);
     const state = jwt.sign({ nonce: randomUUID(), returnTo }, jwtSecret, { audience: 'google-oauth-state', expiresIn: '10m' });
     res.cookie('linkerin_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 10 * 60 * 1000, path: '/auth/google' });
@@ -37,16 +65,73 @@ async function googleCallback(req, res, next) {
         if (!req.query.code || !savedState || savedState !== req.query.state) throw new HttpError(400, 'Invalid Google OAuth callback state.');
         const state = jwt.verify(savedState, jwtSecret, { audience: 'google-oauth-state' });
         res.clearCookie('linkerin_oauth_state', { path: '/auth/google' });
-        const oauthClient = client(); const { tokens } = await oauthClient.getToken(req.query.code);
-        const ticket = await oauthClient.verifyIdToken({ idToken: tokens.id_token, audience: googleClientId }); const profile = ticket.getPayload();
+        const { tokens } = await client().getToken(req.query.code);
+        const profile = (await client().verifyIdToken({ idToken: tokens.id_token, audience: googleClientId })).getPayload();
         if (!profile?.sub || !profile.email || !profile.email_verified) throw new HttpError(401, 'Google account must have a verified email address.');
-        const db = getDatabase(); const [existing] = await db.execute('SELECT * FROM linkerin_users WHERE google_subject = ?', [profile.sub]); let user = existing[0];
-        if (user) { await db.execute('UPDATE linkerin_users SET email = ?, name = ?, picture_url = ? WHERE id = ?', [profile.email, profile.name || null, profile.picture || null, user.id]); user = { ...user, email: profile.email, name: profile.name || null, picture_url: profile.picture || null }; }
-        else { user = { id: newId(), email: profile.email, name: profile.name || null, picture_url: profile.picture || null }; await db.execute('INSERT INTO linkerin_users (id, google_subject, email, name, picture_url) VALUES (?, ?, ?, ?, ?)', [user.id, profile.sub, user.email, user.name, user.picture_url]); }
+        const db = getDatabase();
+        const [existing] = await db.execute('SELECT * FROM linkerin_users WHERE google_subject = ?', [profile.sub]);
+        let user = existing[0];
+        if (user) {
+            await db.execute('UPDATE linkerin_users SET email = ?, name = ?, picture_url = ? WHERE id = ?', [profile.email, profile.name || null, profile.picture || null, user.id]);
+            user = { ...user, email: profile.email, name: profile.name || null, picture_url: profile.picture || null };
+        } else {
+            user = { id: newId(), email: profile.email, name: profile.name || null, picture_url: profile.picture || null };
+            await db.execute('INSERT INTO linkerin_users (id, google_subject, email, name, picture_url) VALUES (?, ?, ?, ?, ?)', [user.id, profile.sub, user.email, user.name, user.picture_url]);
+        }
         const token = jwt.sign({ id: user.id, email: user.email, name: user.name, picture: user.picture_url }, jwtSecret, { expiresIn: '7d' });
-        if (googleOauthSuccessUrl) { const target = new URL(getAppCallbackUrl(state.returnTo)); target.searchParams.set('token', token); return res.redirect(target.toString()); }
-        return res.json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, picture: user.picture_url } });
-    } catch (error) { next(error); }
+        const target = new URL(getAppCallbackUrl(state.returnTo));
+        target.searchParams.set('token', token);
+        return res.redirect(target.toString());
+    } catch (error) {
+        return next(error);
+    }
 }
 
-module.exports = { googleCallback, startGoogleLogin };
+async function startGmailAuthorization(req, res, next) {
+    try {
+        ensureOAuthConfig();
+        if (!googleGmailRedirectUri) throw new HttpError(500, 'Google Gmail OAuth is not configured.');
+        const returnTo = getAppCallbackUrl(req.query.returnTo, '/auth/gmail-callback');
+        const state = jwt.sign({ nonce: randomUUID(), returnTo, userId: req.user.id }, jwtSecret, { audience: 'gmail-oauth-state', expiresIn: '10m' });
+        const authUrl = client(googleGmailRedirectUri).generateAuthUrl({
+            access_type: 'offline',
+            include_granted_scopes: true,
+            prompt: 'consent',
+            scope: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send'],
+            state
+        });
+        return res.json({ success: true, authUrl });
+    } catch (error) {
+        return next(error);
+    }
+}
+
+async function gmailCallback(req, res, next) {
+    try {
+        if (!req.query.code || !req.query.state) throw new HttpError(400, 'Invalid Gmail OAuth callback state.');
+        const state = jwt.verify(req.query.state, jwtSecret, { audience: 'gmail-oauth-state' });
+        const oauthClient = client(googleGmailRedirectUri);
+        const { tokens } = await oauthClient.getToken(req.query.code);
+        if (!tokens.refresh_token || !tokens.access_token) throw new HttpError(400, 'Google did not return a Gmail authorization token. Reconnect Gmail and approve access.');
+        const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${tokens.access_token}` } });
+        const profile = await response.json();
+        const [users] = await getDatabase().execute('SELECT google_subject FROM linkerin_users WHERE id = ?', [state.userId]);
+        if (!response.ok || !profile.sub || !profile.email || !profile.email_verified || !users[0] || profile.sub !== users[0].google_subject) {
+            throw new HttpError(403, 'The selected Google account does not match this LinkerIn account.');
+        }
+        await getDatabase().execute(
+            `INSERT INTO linkerin_gmail_connections (id, user_id, google_subject, gmail_email, encrypted_refresh_token, granted_scopes)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE google_subject = VALUES(google_subject), gmail_email = VALUES(gmail_email),
+             encrypted_refresh_token = VALUES(encrypted_refresh_token), granted_scopes = VALUES(granted_scopes), updated_at = CURRENT_TIMESTAMP(3)`,
+            [newId(), state.userId, profile.sub, profile.email, encryptSecret(tokens.refresh_token), tokens.scope || 'https://www.googleapis.com/auth/gmail.send']
+        );
+        const target = new URL(state.returnTo);
+        target.searchParams.set('gmail', 'connected');
+        return res.redirect(target.toString());
+    } catch (error) {
+        return next(error);
+    }
+}
+
+module.exports = { gmailCallback, googleCallback, startGmailAuthorization, startGoogleLogin };

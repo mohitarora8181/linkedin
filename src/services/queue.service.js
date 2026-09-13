@@ -1,4 +1,4 @@
-const { rabbitMqAiQueue, rabbitMqQueue } = require('../config/env');
+const { rabbitMqAiQueue, rabbitMqGmailQueue, rabbitMqQueue } = require('../config/env');
 const { createChannel, rabbitMqExchange } = require('../config/rabbitmq');
 const logger = require('../utils/logger');
 
@@ -43,4 +43,8 @@ function publishAiParsingJob(job) {
     return publishJob(rabbitMqAiQueue, job);
 }
 
-module.exports = { publishAiParsingJob, publishScrapeJob };
+function publishGmailSendJob(job) {
+    return publishJob(rabbitMqGmailQueue, job);
+}
+
+module.exports = { publishAiParsingJob, publishGmailSendJob, publishScrapeJob };
