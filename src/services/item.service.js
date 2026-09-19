@@ -1,5 +1,6 @@
 const { getDatabase } = require('../config/database');
 const { publishScrapeJob } = require('./queue.service');
+const { queueAiParsing } = require('./ai-queue.service');
 const { extractLinkedInUrl, getLinkedInItemType } = require('../utils/linkedin-url');
 const { HttpError } = require('../utils/http-error');
 const { hashSourceUrl, mapItem, newId } = require('../utils/database');
@@ -41,12 +42,58 @@ async function repushItemForUser({ itemId, userId }) {
 }
 
 async function createPendingItem({ sourceUrl, user }) { const id = newId(); const itemType = getLinkedInItemType(sourceUrl); await getDatabase().execute('INSERT INTO linkerin_items (id, user_id, user_email, source_url, source_url_hash, item_type, content, is_pending) VALUES (?, ?, ?, ?, ?, ?, NULL, TRUE)', [id, user.id, user.email, sourceUrl, hashSourceUrl(sourceUrl), itemType]); return getItemById(id); }
+
+async function createCachedItem({ cache, sourceUrl, user }) {
+    const id = newId();
+    await getDatabase().execute(
+        `INSERT INTO linkerin_items
+         (id, user_id, user_email, source_url, source_url_hash, item_type, content, is_pending,
+          author_name, post_content, job_title, company_name, location)
+         VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?)`,
+        [
+            id,
+            user.id,
+            user.email,
+            sourceUrl,
+            hashSourceUrl(sourceUrl),
+            cache.item_type,
+            cache.content,
+            cache.author_name,
+            cache.post_content,
+            cache.job_title,
+            cache.company_name,
+            cache.location
+        ]
+    );
+    const item = await getItemById(id);
+    await queueAiParsing(item);
+    return getItemById(id);
+}
+
 async function saveLinkedInItem({ rawUrl, user }) {
     const sourceUrl = extractLinkedInUrl(rawUrl); if (!sourceUrl) throw new HttpError(400, 'Valid LinkedIn URL is required');
     const existing = await findItemByUrl({ sourceUrl, userId: user.id }); if (existing) return { duplicate: true, item: existing, queued: existing.is_pending };
+    const [cachedRows] = await getDatabase().execute(
+        `SELECT * FROM linkerin_items
+         WHERE source_url_hash = ? AND is_pending = FALSE
+           AND scrape_error IS NULL AND content IS NOT NULL
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [hashSourceUrl(sourceUrl)]
+    );
+    if (cachedRows[0]) {
+        const item = await createCachedItem({ cache: cachedRows[0], sourceUrl, user });
+        return { duplicate: false, item, queued: true, reusedScrape: true };
+    }
+    const [pendingRows] = await getDatabase().execute(
+        'SELECT id FROM linkerin_items WHERE source_url_hash = ? AND is_pending = TRUE LIMIT 1',
+        [hashSourceUrl(sourceUrl)]
+    );
     const item = await createPendingItem({ sourceUrl, user });
-    try { await publishScrapeJob({ itemId: item.id, itemType: item.item_type, sourceUrl: item.source_url, userId: item.user_id }); }
-    catch (error) { logger.error('Failed to publish scrape job to RabbitMQ', error); await markItemFailed({ itemId: item.id, errorMessage: 'Unable to queue scraping job. Try again later.' }); throw new HttpError(503, 'Unable to queue scraping job. Try again later.'); }
+    if (!pendingRows[0]) {
+        try { await publishScrapeJob({ itemId: item.id, itemType: item.item_type, sourceUrl: item.source_url, userId: item.user_id }); }
+        catch (error) { logger.error('Failed to publish scrape job to RabbitMQ', error); await markItemFailed({ itemId: item.id, errorMessage: 'Unable to queue scraping job. Try again later.' }); throw new HttpError(503, 'Unable to queue scraping job. Try again later.'); }
+    }
     return { duplicate: false, item, queued: true };
 }
 async function countItemsForUser({ userId }) { const [rows] = await getDatabase().execute("SELECT item_type, COUNT(*) AS count FROM linkerin_items WHERE user_id = ? AND item_type IN ('post', 'job') GROUP BY item_type", [userId]); return { posts: Number(rows.find((row) => row.item_type === 'post')?.count || 0), jobs: Number(rows.find((row) => row.item_type === 'job')?.count || 0) }; }

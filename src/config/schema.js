@@ -62,7 +62,7 @@ const schemaStatements = [
         connected_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_linkerin_gmail_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
-    )`
+    )`,
 ];
 
 const columnMigrations = {

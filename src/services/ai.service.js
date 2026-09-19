@@ -238,13 +238,18 @@ Rules:
    - Keep each achievement attached to its exact role, company, or project. Do not merge achievements from different roles into one sentence.
    - Do not claim the candidate has experience with a requirement merely because it appears in the opportunity. Mention overlap only when the resume explicitly supports it.
    - If the resume does not support a specific claim, omit it and use a truthful general statement instead. Never compensate for missing information with plausible-sounding details.
-5. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
-6. Human readability is mandatory:
+5. Current experience must guide the positioning:
+   - Treat the candidate's most recent role, current employer, current responsibilities, and latest demonstrated skills as the primary evidence of fit. Prefer these over older roles when both are relevant.
+   - When the opportunity is a higher-level or more senior position than the candidate's current title, still evaluate the candidate against the actual responsibilities and requirements. Present relevant current experience, scope, ownership, and transferable skills honestly without claiming the candidate already holds the advertised seniority.
+   - Do not reject a potentially suitable higher-level role only because the candidate's current title is lower. Instead, frame the application around the strongest verified current experience and explain fit through responsibilities and outcomes, not inflated titles.
+   - Never describe the candidate as a lead, senior, manager, architect, or expert unless that level is explicitly supported by the resume. Use accurate wording such as "I am interested in applying my current experience in..." when seniority is not established.
+6. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
+7. Human readability is mandatory:
    - Write like a thoughtful candidate, not an AI-generated template. Use clear, natural, professional language with varied sentence structure.
    - Keep the message specific but not overloaded with technologies or resume facts. Select only the strongest relevant evidence.
    - Avoid buzzword stacking, exaggerated claims, repetition, awkward phrases, generic filler, markdown, bullet points, and unexplained abbreviations.
    - Ensure grammar, punctuation, capitalization, paragraph breaks, greeting, closing, and candidate name are correct. Read the complete draft once for coherence before returning it.
-7. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; otherwise use null.
+8. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; apply the same current-experience and honest-seniority rules; otherwise use null.
 
 Return exactly this JSON shape:
 {"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;

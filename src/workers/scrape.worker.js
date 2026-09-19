@@ -71,20 +71,46 @@ async function handleMessage(channel, message) {
         }
 
         if (scrapeError) {
-            await markItemFailed({ itemId, errorMessage: scrapeError });
+            await getDatabase().execute(
+                'UPDATE linkerin_items SET is_pending = FALSE, scrape_error = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE source_url_hash = ? AND is_pending = TRUE',
+                [scrapeError, hashSourceUrl(sourceUrl)]
+            );
             channel.ack(message);
             return;
         }
 
         // 2. Update database directly
         const fields = searchableFieldsForItem({ content, itemType: resolvedItemType });
-        await getDatabase().execute('UPDATE linkerin_items SET source_url = ?, source_url_hash = ?, item_type = ?, content = ?, is_pending = FALSE, scrape_error = NULL, author_name = ?, post_content = ?, job_title = ?, company_name = ?, location = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [resolvedSourceUrl, hashSourceUrl(resolvedSourceUrl), resolvedItemType, JSON.stringify(content), ...Object.values(fields), itemId]);
-        const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]);
-        const updatedItem = rows[0];
+        const hashes = [hashSourceUrl(sourceUrl), hashSourceUrl(resolvedSourceUrl)];
+        const placeholders = hashes.map(() => '?').join(', ');
+        const [pendingItems] = await getDatabase().execute(
+            `SELECT id FROM linkerin_items
+             WHERE source_url_hash IN (${placeholders}) AND is_pending = TRUE`,
+            hashes
+        );
+        await getDatabase().execute(
+            `UPDATE linkerin_items SET source_url = ?, source_url_hash = ?, item_type = ?, content = ?,
+             is_pending = FALSE, scrape_error = NULL, author_name = ?, post_content = ?, job_title = ?,
+             company_name = ?, location = ?, updated_at = CURRENT_TIMESTAMP(3)
+             WHERE source_url_hash IN (${placeholders}) AND is_pending = TRUE`,
+            [resolvedSourceUrl, hashSourceUrl(resolvedSourceUrl), resolvedItemType, JSON.stringify(content), ...Object.values(fields), ...hashes]
+        );
         logger.info(`Successfully scraped and updated item ${itemId}`);
 
         // 3. Queue AI job directly
-        await queueAiParsing(updatedItem);
+        const itemIds = pendingItems.map((pendingItem) => pendingItem.id);
+        if (itemIds.length === 0) {
+            channel.ack(message);
+            return;
+        }
+        const itemIdPlaceholders = itemIds.map(() => '?').join(', ');
+        const [updatedItems] = await getDatabase().execute(
+            `SELECT * FROM linkerin_items WHERE id IN (${itemIdPlaceholders})`,
+            itemIds
+        );
+        for (const updatedItem of updatedItems) {
+            await queueAiParsing(updatedItem);
+        }
 
         channel.ack(message);
     } catch (error) {
