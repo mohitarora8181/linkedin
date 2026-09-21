@@ -1,6 +1,7 @@
 const { getDatabase } = require('../config/database');
 const { publishScrapeJob } = require('./queue.service');
 const { queueAiParsing } = require('./ai-queue.service');
+const { getResumeProfileForUser } = require('./profile.service');
 const { extractLinkedInUrl, getLinkedInItemType } = require('../utils/linkedin-url');
 const { HttpError } = require('../utils/http-error');
 const { hashSourceUrl, mapItem, newId } = require('../utils/database');
@@ -72,6 +73,10 @@ async function createCachedItem({ cache, sourceUrl, user }) {
 
 async function saveLinkedInItem({ rawUrl, user }) {
     const sourceUrl = extractLinkedInUrl(rawUrl); if (!sourceUrl) throw new HttpError(400, 'Valid LinkedIn URL is required');
+    const resumeProfile = await getResumeProfileForUser({ userId: user.id });
+    if (!resumeProfile?.resume_summary) {
+        throw new HttpError(409, 'Upload your resume before processing LinkedIn content.');
+    }
     const existing = await findItemByUrl({ sourceUrl, userId: user.id }); if (existing) return { duplicate: true, item: existing, queued: existing.is_pending };
     const [cachedRows] = await getDatabase().execute(
         `SELECT * FROM linkerin_items
