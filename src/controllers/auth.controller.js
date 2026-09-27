@@ -14,6 +14,8 @@ const { getDatabase } = require('../config/database');
 const { newId } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
 const { encryptSecret } = require('../utils/secret');
+const { updateAutoEmailSetting } = require('../services/profile.service');
+const { queueEligibleAutoEmails } = require('../services/gmail.service');
 
 function client(redirectUri = googleRedirectUri) {
     return new OAuth2Client(googleClientId, googleClientSecret, redirectUri);
@@ -91,8 +93,20 @@ async function startGmailAuthorization(req, res, next) {
     try {
         ensureOAuthConfig();
         if (!googleGmailRedirectUri) throw new HttpError(500, 'Google Gmail OAuth is not configured.');
+        if (req.query.autoEmail === 'true') {
+            const [profiles] = await getDatabase().execute(
+                'SELECT id FROM linkerin_user_profiles WHERE user_id = ?',
+                [req.user.id]
+            );
+            if (!profiles[0]) throw new HttpError(409, 'Upload your resume before enabling Auto Email.');
+        }
         const returnTo = getAppCallbackUrl(req.query.returnTo, '/auth/gmail-callback');
-        const state = jwt.sign({ nonce: randomUUID(), returnTo, userId: req.user.id }, jwtSecret, { audience: 'gmail-oauth-state', expiresIn: '10m' });
+        const state = jwt.sign({
+            nonce: randomUUID(),
+            returnTo,
+            userId: req.user.id,
+            enableAutoEmail: req.query.autoEmail === 'true'
+        }, jwtSecret, { audience: 'gmail-oauth-state', expiresIn: '10m' });
         const authUrl = client(googleGmailRedirectUri).generateAuthUrl({
             access_type: 'offline',
             include_granted_scopes: true,
@@ -126,8 +140,13 @@ async function gmailCallback(req, res, next) {
              encrypted_refresh_token = VALUES(encrypted_refresh_token), granted_scopes = VALUES(granted_scopes), updated_at = CURRENT_TIMESTAMP(3)`,
             [newId(), state.userId, profile.sub, profile.email, encryptSecret(tokens.refresh_token), tokens.scope || 'https://www.googleapis.com/auth/gmail.send']
         );
+        if (state.enableAutoEmail) {
+            await updateAutoEmailSetting({ enabled: true, userId: state.userId });
+            await queueEligibleAutoEmails({ userId: state.userId });
+        }
         const target = new URL(state.returnTo);
         target.searchParams.set('gmail', 'connected');
+        if (state.enableAutoEmail) target.searchParams.set('autoEmail', 'enabled');
         return res.redirect(target.toString());
     } catch (error) {
         return next(error);

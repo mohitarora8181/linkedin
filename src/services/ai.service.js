@@ -3,6 +3,7 @@ const { getDatabase } = require('../config/database');
 const { mapItem, mapProfile, serializeJson } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
 const logger = require('../utils/logger');
+const { queueAutoEmailForItem } = require('./gmail.service');
 
 function parseJsonFromText(text) {
     const cleaned = String(text || '')
@@ -333,7 +334,7 @@ async function processAiParsingJob({ itemId }) {
         }
     }
 
-    return updateAiFields(item.id, {
+    const updatedItem = await updateAiFields(item.id, {
         ai_error: null,
         ai_mail: isJobRelated ? {
             subject: result.subject || null,
@@ -347,6 +348,11 @@ async function processAiParsingJob({ itemId }) {
         // Store as JSON array string so existing text column holds multiple emails
         recruiter_email: recruiterEmails ? JSON.stringify(recruiterEmails) : null
     });
+    if (isJobRelated && updatedItem.ai_mail?.subject && updatedItem.ai_mail?.message && recruiterEmails?.length) {
+        await queueAutoEmailForItem({ itemId: item.id, userId: item.user_id });
+        return getItem(item.id);
+    }
+    return updatedItem;
 }
 
 module.exports = { markAiFailed, markAiQueued, processAiParsingJob };

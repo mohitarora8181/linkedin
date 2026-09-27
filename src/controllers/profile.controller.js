@@ -1,5 +1,5 @@
-const { getResumeProfileForUser, saveResumeProfile } = require('../services/profile.service');
-const { getGmailConnectionStatus } = require('../services/gmail.service');
+const { getResumeProfileForUser, saveResumeProfile, updateAutoEmailSetting } = require('../services/profile.service');
+const { getGmailConnectionStatus, queueEligibleAutoEmails } = require('../services/gmail.service');
 
 async function getResumeProfile(req, res, next) {
     try {
@@ -8,6 +8,7 @@ async function getResumeProfile(req, res, next) {
         return res.json({
             success: true,
             hasResume: Boolean(profile?.resume_summary),
+            autoEmailEnabled: Boolean(profile?.auto_email_enabled),
             gmail,
             profile
         });
@@ -29,4 +30,19 @@ async function uploadResume(req, res, next) {
     }
 }
 
-module.exports = { getResumeProfile, uploadResume };
+async function setAutoEmail(req, res, next) {
+    try {
+        const enabled = await updateAutoEmailSetting({
+            enabled: req.body?.enabled,
+            userId: req.user.id
+        });
+        if (enabled) {
+            await queueEligibleAutoEmails({ userId: req.user.id });
+        }
+        return res.json({ success: true, enabled });
+    } catch (err) {
+        next(err);
+    }
+}
+
+module.exports = { getResumeProfile, setAutoEmail, uploadResume };

@@ -1,7 +1,7 @@
 const { rabbitMqGmailQueue } = require('../config/env');
 const { createChannel, onReconnect } = require('../config/rabbitmq');
 const { initializeDatabase } = require('../config/database');
-const { markGmailSendFailed, sendItemEmail } = require('../services/gmail.service');
+const { markGmailSendFailed, queueEligibleAutoEmailsForEnabledUsers, sendItemEmail } = require('../services/gmail.service');
 const logger = require('../utils/logger');
 
 let workerChannel = null;
@@ -18,9 +18,13 @@ async function handleMessage(channel, message) {
             return;
         }
 
-        await sendItemEmail({ itemId: job.itemId, userId: job.userId, email: job.email });
+        const result = await sendItemEmail({ itemId: job.itemId, userId: job.userId, email: job.email, auto: job.auto === true });
+        if (result.skipped) {
+            logger.info(`Skipped queued automatic Gmail message because Auto Email is off for item ${job.itemId}`);
+        } else {
+            logger.info(`Successfully sent Gmail message for item ${job.itemId}`);
+        }
         channel.ack(message);
-        logger.info(`Successfully sent Gmail message for item ${job.itemId}`);
     } catch (error) {
         logger.error('Failed to process Gmail send job', error, { itemId: job?.itemId });
         if (job?.itemId && job?.userId) {
@@ -43,6 +47,7 @@ async function handleMessage(channel, message) {
 
 async function startGmailWorker() {
     await initializeDatabase();
+    await queueEligibleAutoEmailsForEnabledUsers();
     logger.info('Initializing Gmail send worker channel...');
     workerChannel = await createChannel(rabbitMqGmailQueue);
     await workerChannel.prefetch(1);

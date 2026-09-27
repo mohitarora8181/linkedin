@@ -67,8 +67,21 @@ async function getConnection({ userId, email }) {
     return rows[0];
 }
 
-async function sendItemEmail({ itemId, userId, email }) {
+async function sendItemEmail({ itemId, userId, email, auto = false }) {
     const item = await getItemForUser({ itemId, userId });
+    if (auto) {
+        const [settings] = await getDatabase().execute(
+            'SELECT auto_email_enabled FROM linkerin_user_profiles WHERE user_id = ?',
+            [userId]
+        );
+        if (!settings[0]?.auto_email_enabled) {
+            await getDatabase().execute(
+                "UPDATE linkerin_items SET mail_send_status = 'idle', mail_send_error = NULL, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND user_id = ? AND mail_send_status = 'queued'",
+                [itemId, userId]
+            );
+            return { item: await getItemForUser({ itemId, userId }), skipped: true };
+        }
+    }
     if (item.mail_sent) {
         throw new HttpError(409, 'This email has already been marked as sent.');
     }
@@ -121,7 +134,7 @@ async function sendItemEmail({ itemId, userId, email }) {
     return { item: updatedItem, messageId: payload.id, gmailEmail: connection.gmail_email };
 }
 
-async function queueItemEmail({ itemId, userId, email }) {
+async function queueItemEmail({ itemId, userId, email, auto = false }) {
     const item = await getItemForUser({ itemId, userId });
     if (item.mail_sent || item.mail_send_status === 'sent') {
         throw new HttpError(409, 'This email has already been sent.');
@@ -136,12 +149,19 @@ async function queueItemEmail({ itemId, userId, email }) {
         throw new HttpError(400, 'This item does not contain a valid email recipient and draft.');
     }
     await getConnection({ userId, email });
-    await getDatabase().execute(
+    const [updateResult] = await getDatabase().execute(
         "UPDATE linkerin_items SET mail_send_status = 'queued', mail_send_error = NULL, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND user_id = ? AND mail_send_status IN ('idle', 'failed')",
         [itemId, userId]
     );
+    if (updateResult.affectedRows !== 1) {
+        const currentItem = await getItemForUser({ itemId, userId });
+        if (currentItem.mail_send_status === 'queued') {
+            return { item: currentItem, queued: true };
+        }
+        throw new HttpError(409, 'This email is no longer eligible to be queued.');
+    }
     try {
-        await publishGmailSendJob({ itemId, userId, email });
+        await publishGmailSendJob({ itemId, userId, email, auto });
     } catch (error) {
         logger.error('Failed to queue Gmail send job', error, { itemId });
         await getDatabase().execute(
@@ -151,6 +171,71 @@ async function queueItemEmail({ itemId, userId, email }) {
         throw new HttpError(503, 'Unable to queue email. Try again later.');
     }
     return { item: await getItemForUser({ itemId, userId }), queued: true };
+}
+
+async function queueAutoEmailForItem({ itemId, userId }) {
+    const [settings] = await getDatabase().execute(
+        'SELECT auto_email_enabled FROM linkerin_user_profiles WHERE user_id = ?',
+        [userId]
+    );
+    if (!settings[0]?.auto_email_enabled) {
+        logger.info('Auto Email queue skipped because the account setting is disabled', { itemId, userId });
+        return { queued: false };
+    }
+
+    const [users] = await getDatabase().execute('SELECT email FROM linkerin_users WHERE id = ?', [userId]);
+    try {
+        const result = await queueItemEmail({
+            itemId,
+            userId,
+            email: users[0]?.email,
+            auto: true
+        });
+        logger.info('Automatic Gmail send queued', { itemId, userId, queueStatus: result.item.mail_send_status });
+        return result;
+    } catch (error) {
+        logger.error('Failed to queue automatic Gmail send', error, { itemId, userId });
+        await getDatabase().execute(
+            `UPDATE linkerin_items
+             SET mail_send_status = 'failed', mail_send_error = ?, updated_at = CURRENT_TIMESTAMP(3)
+             WHERE id = ? AND user_id = ? AND mail_send_status IN ('idle', 'failed')`,
+            [String(error.message || 'Automatic email could not be queued.').slice(0, 1000), itemId, userId]
+        );
+        return { queued: false, error };
+    }
+}
+
+async function queueEligibleAutoEmails({ userId }) {
+    const [items] = await getDatabase().execute(
+        `SELECT id FROM linkerin_items
+         WHERE user_id = ? AND ai_status = 'completed' AND is_job_related = TRUE
+           AND ai_mail IS NOT NULL AND recruiter_email IS NOT NULL
+           AND mail_sent = FALSE AND mail_send_status = 'idle'
+         ORDER BY ai_updated_at ASC`,
+        [userId]
+    );
+    let queuedCount = 0;
+    for (const item of items) {
+        const result = await queueAutoEmailForItem({ itemId: item.id, userId });
+        if (result.queued) queuedCount += 1;
+    }
+    return queuedCount;
+}
+
+async function queueEligibleAutoEmailsForEnabledUsers() {
+    const [users] = await getDatabase().execute(
+        'SELECT user_id FROM linkerin_user_profiles WHERE auto_email_enabled = TRUE'
+    );
+    let queuedCount = 0;
+    for (const user of users) {
+        const eligibleCount = await queueEligibleAutoEmails({ userId: user.user_id });
+        queuedCount += eligibleCount;
+    }
+    logger.info('Completed automatic Gmail queue recovery scan', {
+        enabledAccounts: users.length,
+        eligibleItems: queuedCount
+    });
+    return queuedCount;
 }
 
 async function markGmailSendFailed({ itemId, userId, errorMessage }) {
@@ -179,4 +264,4 @@ async function getGmailConnectionStatus({ userId, email }) {
     };
 }
 
-module.exports = { buildMimeMessage, getGmailConnectionStatus, markGmailSendFailed, queueItemEmail, sendItemEmail };
+module.exports = { buildMimeMessage, getGmailConnectionStatus, markGmailSendFailed, queueAutoEmailForItem, queueEligibleAutoEmails, queueEligibleAutoEmailsForEnabledUsers, queueItemEmail, sendItemEmail };

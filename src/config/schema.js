@@ -48,6 +48,7 @@ const schemaStatements = [
         resume_summary JSON NOT NULL,
         resume_file_name TEXT NULL,
         resume_mime_type VARCHAR(255) NULL,
+        auto_email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_linkerin_profiles_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
@@ -70,6 +71,9 @@ const columnMigrations = {
         linkedin_message_draft: 'TEXT NULL',
         mail_send_status: "ENUM('idle', 'queued', 'sent', 'failed') NOT NULL DEFAULT 'idle'",
         mail_send_error: 'TEXT NULL'
+    },
+    linkerin_user_profiles: {
+        auto_email_enabled: 'BOOLEAN NOT NULL DEFAULT FALSE'
     }
 };
 
