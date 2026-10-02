@@ -1,10 +1,11 @@
 const { Router } = require('express');
 const { sendGmailItem } = require('../controllers/gmail.controller');
-const { createItem, getItem, getItemCounts, listItems, markItemSent, repushItem } = require('../controllers/item.controller');
+const { createItem, createOutreach, getItem, getItemCounts, listItems, markItemSent, repushItem } = require('../controllers/item.controller');
 const { requireUser } = require('../middleware/auth');
 
 const router = Router();
 
+router.post('/outreach', requireUser, createOutreach);
 router.get('/items', requireUser, listItems);
 router.post('/items', requireUser, createItem);
 router.get('/items/counts', requireUser, getItemCounts);

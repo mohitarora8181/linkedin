@@ -1,7 +1,7 @@
-const { countItemsForUser, getItemForUser, listItemsForUser, markItemMailSentForUser, repushItemForUser, saveLinkedInItem } = require('../services/item.service');
+const { countItemsForUser, createOutreachForUser, getItemForUser, listItemsForUser, markItemMailSentForUser, repushItemForUser, saveLinkedInItem } = require('../services/item.service');
 
 function normalizeType(value) {
-    return value === 'post' || value === 'job' ? value : null;
+    return value === 'post' || value === 'job' || value === 'outreach' ? value : null;
 }
 
 async function listItems(req, res, next) {
@@ -18,6 +18,19 @@ async function listItems(req, res, next) {
             success: true,
             ...result
         });
+    } catch (err) {
+        next(err);
+    }
+}
+
+async function createOutreach(req, res, next) {
+    try {
+        const item = await createOutreachForUser({
+            message: req.body?.message,
+            user: req.user
+        });
+
+        return res.status(202).json({ success: true, item, queued: item.ai_status === 'queued' });
     } catch (err) {
         next(err);
     }
@@ -97,4 +110,4 @@ async function getItemCounts(req, res, next) {
     }
 }
 
-module.exports = { createItem, getItem, getItemCounts, listItems, markItemSent, repushItem };
+module.exports = { createItem, createOutreach, getItem, getItemCounts, listItems, markItemSent, repushItem };

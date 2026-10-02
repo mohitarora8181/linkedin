@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS linkerin_items (
   user_email VARCHAR(320) NOT NULL,
   source_url TEXT NOT NULL,
   source_url_hash CHAR(64) NOT NULL,
-  item_type ENUM('job', 'post') NOT NULL,
+  item_type ENUM('job', 'post', 'outreach') NOT NULL,
   content JSON NULL,
   is_pending BOOLEAN NOT NULL DEFAULT TRUE,
   scrape_error TEXT NULL,

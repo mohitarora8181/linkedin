@@ -59,6 +59,17 @@ async function initializeDatabase() {
                 await database.query(statement);
             }
 
+            const [itemColumns] = await database.query('SHOW COLUMNS FROM `linkerin_items`');
+            const itemTypeColumn = itemColumns.find((column) => column.Field === 'item_type');
+            if (itemTypeColumn && !itemTypeColumn.Type.includes("'outreach'")) {
+                await database.query("ALTER TABLE `linkerin_items` MODIFY COLUMN `item_type` ENUM('job', 'post', 'outreach') NOT NULL");
+            }
+
+            if (itemColumns.some((column) => column.Field === 'is_outreach')) {
+                await database.query('UPDATE `linkerin_items` SET `item_type` = ? WHERE `is_outreach` = TRUE', ['outreach']);
+                await database.query('ALTER TABLE `linkerin_items` DROP COLUMN `is_outreach`');
+            }
+
             for (const [tableName, columns] of Object.entries(columnMigrations)) {
                 const [existingColumns] = await database.query(`SHOW COLUMNS FROM \`${tableName}\``);
                 const existingNames = new Set(existingColumns.map((column) => column.Field));

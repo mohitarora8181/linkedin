@@ -156,7 +156,7 @@ function compactValue(value, { maxArrayLength = 8, maxObjectKeys = 20, maxString
 
 function compactItemContent(item) {
     const content = item.content || {};
-    if (item.item_type === 'post') {
+    if (item.item_type === 'post' || item.item_type === 'outreach') {
         return {
             author: compactValue(content.author, { maxStringLength: 300 }),
             content: truncateText(content.content, 7000),
@@ -194,7 +194,7 @@ function collectEmailCandidates(item) {
     }
 
     const content = item.content || {};
-    if (item.item_type === 'post') {
+    if (item.item_type === 'post' || item.item_type === 'outreach') {
         collect(content.content, 'post body');
         for (const comment of content.comments || []) {
             collect(comment?.content, `comment by ${truncateText(comment?.author, 80) || 'unknown user'}`);
@@ -223,15 +223,17 @@ function buildPrompt({ item, resumeSummary, emailCandidates }) {
     const resumeJson = toBoundedJson(compactResume, 7500);
     const contentJson = toBoundedJson(compactContent, 11000);
 
-    return `Generate a finished email draft and an optional LinkedIn outreach message for this LinkedIn opportunity. Use only the supplied data. Never invent facts, names, skills, links, or emails. The candidate profile claims must be factually correct, traceable to the supplied resume, and written in natural human language. Return JSON only.
+    return `${item.item_type === 'outreach'
+        ? 'Generate a finished email draft and a LinkedIn outreach message in response to this pasted recruiter message.'
+        : 'Generate a finished email draft and an optional LinkedIn outreach message for this LinkedIn opportunity.'} Use only the supplied data. Never invent facts, names, skills, links, or emails. The candidate profile claims must be factually correct, traceable to the supplied resume, and written in natural human language. Return JSON only.
 
-Opportunity type: ${item.item_type}
+Opportunity type: ${item.item_type === 'outreach' ? 'Pasted recruiter message' : item.item_type}
 Opportunity data: ${contentJson}
 Candidate resume: ${resumeJson}
 Email candidates found in the source: ${JSON.stringify(emailCandidates)}
 
 Rules:
-1. A job item is job-related. For a post, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
+1. For outreach items, always set is_job_related true. For LinkedIn job items, set it true. For LinkedIn posts, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
 2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email.
 3. Decide whether the author is the direct hiring contact. Mention that briefly in reason.
 4. Candidate profile accuracy is mandatory:
@@ -244,13 +246,13 @@ Rules:
    - When the opportunity is a higher-level or more senior position than the candidate's current title, still evaluate the candidate against the actual responsibilities and requirements. Present relevant current experience, scope, ownership, and transferable skills honestly without claiming the candidate already holds the advertised seniority.
    - Do not reject a potentially suitable higher-level role only because the candidate's current title is lower. Instead, frame the application around the strongest verified current experience and explain fit through responsibilities and outcomes, not inflated titles.
    - Never describe the candidate as a lead, senior, manager, architect, or expert unless that level is explicitly supported by the resume. Use accurate wording such as "I am interested in applying my current experience in..." when seniority is not established.
-6. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
+6. If job-related, write a concise, ready-to-send 120-180 word email with a specific subject. For an outreach item, respond naturally to the recruiter message's instructions and context. Use \n\n between greeting, short paragraphs, and sign-off. No placeholders. Do not put recipient email addresses in the email body unless the opportunity explicitly requires it.
 7. Human readability is mandatory:
    - Write like a thoughtful candidate, not an AI-generated template. Use clear, natural, professional language with varied sentence structure.
    - Keep the message specific but not overloaded with technologies or resume facts. Select only the strongest relevant evidence.
    - Avoid buzzword stacking, exaggerated claims, repetition, awkward phrases, generic filler, markdown, bullet points, and unexplained abbreviations.
    - Ensure grammar, punctuation, capitalization, paragraph breaks, greeting, closing, and candidate name are correct. Read the complete draft once for coherence before returning it.
-8. When a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; apply the same current-experience and honest-seniority rules; otherwise use null.
+8. For an outreach item, create a polished, concise LinkedIn message that responds to the recruiter and the supplied opportunity. For other items, when a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; apply the same current-experience and honest-seniority rules; otherwise use null.
 
 Return exactly this JSON shape:
 {"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;
@@ -321,7 +323,7 @@ async function processAiParsingJob({ itemId }) {
     }
 
     const result = await callGroqForMail({ item, resumeSummary });
-    const isJobRelated = item.item_type === 'job' ? true : Boolean(result.is_job_related);
+    const isJobRelated = item.item_type === 'outreach' || item.item_type === 'job' ? true : Boolean(result.is_job_related);
 
     // Normalize recruiter_emails — accept both old string and new array format from AI
     let recruiterEmails = null;
@@ -348,7 +350,7 @@ async function processAiParsingJob({ itemId }) {
         // Store as JSON array string so existing text column holds multiple emails
         recruiter_email: recruiterEmails ? JSON.stringify(recruiterEmails) : null
     });
-    if (isJobRelated && updatedItem.ai_mail?.subject && updatedItem.ai_mail?.message && recruiterEmails?.length) {
+    if (item.item_type !== 'outreach' && isJobRelated && updatedItem.ai_mail?.subject && updatedItem.ai_mail?.message && recruiterEmails?.length) {
         await queueAutoEmailForItem({ itemId: item.id, userId: item.user_id });
         return getItem(item.id);
     }

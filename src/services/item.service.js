@@ -22,7 +22,7 @@ async function listItemsForUser({ cursor, limit: rawLimit, search, type, userId 
     if (type) { where.push('item_type = ?'); params.push(type); }
     if (decoded) { where.push('(created_at < ? OR (created_at = ? AND id < ?))'); params.push(decoded.created_at, decoded.created_at, decoded.id); }
     const term = String(search || '').trim();
-    if (term && type === 'post') { try { new RegExp(term); } catch { throw new HttpError(400, 'Post search must be a valid regular expression.'); } where.push('(author_name REGEXP ? OR post_content REGEXP ?)'); params.push(term, term); }
+    if (term && (type === 'post' || type === 'outreach')) { try { new RegExp(term); } catch { throw new HttpError(400, 'Post search must be a valid regular expression.'); } where.push('(author_name REGEXP ? OR post_content REGEXP ?)'); params.push(term, term); }
     else if (term && type === 'job') { const escaped = term.replace(/[\\%_]/g, '\\$&'); where.push("(job_title LIKE ? ESCAPE '\\\\' OR company_name LIKE ? ESCAPE '\\\\' OR location LIKE ? ESCAPE '\\\\')"); params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`); }
     params.push(limit + 1);
     const [rows] = await getDatabase().query(`SELECT * FROM linkerin_items WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`, params);
@@ -71,6 +71,40 @@ async function createCachedItem({ cache, sourceUrl, user }) {
     return getItemById(id);
 }
 
+async function createOutreachForUser({ message: rawMessage, user }) {
+    const message = String(rawMessage ?? '').trim();
+    if (!message) throw new HttpError(400, 'Recruiter message is required.');
+    if (message.length > 20000) throw new HttpError(400, 'Recruiter message must be 20,000 characters or fewer.');
+
+    const resumeProfile = await getResumeProfileForUser({ userId: user.id });
+    if (!resumeProfile?.resume_summary) {
+        throw new HttpError(409, 'Upload your resume before generating outreach drafts.');
+    }
+
+    const id = newId();
+    const sourceUrl = `linkerin://outreach/${id}`;
+    const content = {
+        content: message,
+        comments: [],
+        mentions: []
+    };
+
+    await getDatabase().execute(
+        `INSERT INTO linkerin_items
+         (id, user_id, user_email, source_url, source_url_hash, item_type, content, is_pending, post_content)
+         VALUES (?, ?, ?, ?, ?, 'outreach', ?, FALSE, ?)`,
+        [id, user.id, user.email, sourceUrl, hashSourceUrl(sourceUrl), JSON.stringify(content), message]
+    );
+
+    const item = await getItemById(id);
+    try {
+        await queueAiParsing(item);
+    } catch (error) {
+        logger.error('Failed to queue AI generation for recruiter message', error, { itemId: id });
+    }
+    return getItemById(id);
+}
+
 async function saveLinkedInItem({ rawUrl, user }) {
     const sourceUrl = extractLinkedInUrl(rawUrl); if (!sourceUrl) throw new HttpError(400, 'Valid LinkedIn URL is required');
     const resumeProfile = await getResumeProfileForUser({ userId: user.id });
@@ -101,7 +135,7 @@ async function saveLinkedInItem({ rawUrl, user }) {
     }
     return { duplicate: false, item, queued: true };
 }
-async function countItemsForUser({ userId }) { const [rows] = await getDatabase().execute("SELECT item_type, COUNT(*) AS count FROM linkerin_items WHERE user_id = ? AND item_type IN ('post', 'job') GROUP BY item_type", [userId]); return { posts: Number(rows.find((row) => row.item_type === 'post')?.count || 0), jobs: Number(rows.find((row) => row.item_type === 'job')?.count || 0) }; }
+async function countItemsForUser({ userId }) { const [rows] = await getDatabase().execute("SELECT item_type, COUNT(*) AS count FROM linkerin_items WHERE user_id = ? AND item_type IN ('post', 'job', 'outreach') GROUP BY item_type", [userId]); return { posts: Number(rows.find((row) => row.item_type === 'post')?.count || 0), jobs: Number(rows.find((row) => row.item_type === 'job')?.count || 0), outreach: Number(rows.find((row) => row.item_type === 'outreach')?.count || 0) }; }
 async function markItemMailSentForUser({ itemId, userId }) { const item = await getItemForUser({ itemId, userId }); return updateItem(item.id, { mail_sent: true }); }
 
-module.exports = { countItemsForUser, getItemById, getItemForUser, listItemsForUser, markItemFailed, markItemMailSentForUser, repushItemForUser, saveLinkedInItem, searchableFieldsForItem, updateItem };
+module.exports = { countItemsForUser, createOutreachForUser, getItemById, getItemForUser, listItemsForUser, markItemFailed, markItemMailSentForUser, repushItemForUser, saveLinkedInItem, searchableFieldsForItem, updateItem };
