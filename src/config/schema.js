@@ -64,6 +64,35 @@ const schemaStatements = [
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT fk_linkerin_gmail_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS bulk_email_processor (
+        id CHAR(36) PRIMARY KEY,
+        batch_id CHAR(36) NOT NULL,
+        user_id CHAR(36) NOT NULL,
+        email_to TEXT NOT NULL,
+        subject TEXT NULL,
+        body_template MEDIUMTEXT NULL,
+        column_values JSON NOT NULL,
+        status ENUM('preparing', 'queued', 'sending', 'sent', 'failed') NOT NULL DEFAULT 'preparing',
+        error_message TEXT NULL,
+        email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+        email_sent_at DATETIME(3) NULL,
+        available_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_bulk_email_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE,
+        KEY bulk_email_batch_idx (batch_id, status, created_at),
+        KEY bulk_email_user_idx (user_id, created_at DESC),
+        KEY bulk_email_pending_idx (status, available_at, batch_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS linkerin_email_send_limits (
+        user_id CHAR(36) PRIMARY KEY,
+        sent_on DATE NOT NULL,
+        sent_count INT UNSIGNED NOT NULL DEFAULT 0,
+        in_flight_count INT UNSIGNED NOT NULL DEFAULT 0,
+        last_attempt_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_email_send_limits_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
+    )`,
 ];
 
 const columnMigrations = {
@@ -74,6 +103,9 @@ const columnMigrations = {
     },
     linkerin_user_profiles: {
         auto_email_enabled: 'BOOLEAN NOT NULL DEFAULT FALSE'
+    },
+    bulk_email_processor: {
+        available_at: 'DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)'
     }
 };
 

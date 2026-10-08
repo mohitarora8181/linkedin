@@ -4,6 +4,7 @@ const healthRoutes = require('./routes/health.routes');
 const itemRoutes = require('./routes/item.routes');
 const profileRoutes = require('./routes/profile.routes');
 const authRoutes = require('./routes/auth.routes');
+const bulkEmailRoutes = require('./routes/bulk-email.routes');
 const { errorHandler } = require('./middleware/error-handler');
 const { corsAllowedOrigins } = require('./config/env');
 
@@ -38,6 +39,7 @@ app.use(authRoutes);
 app.use(adminRoutes);
 app.use(itemRoutes);
 app.use(profileRoutes);
+app.use(bulkEmailRoutes);
 
 app.use(errorHandler);
 

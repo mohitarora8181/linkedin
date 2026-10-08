@@ -5,6 +5,7 @@ const { initializeDatabase } = require('./config/database');
 const { startAiWorker } = require('./workers/ai.worker');
 const { startWorker: startScrapeWorker } = require('./workers/scrape.worker');
 const { startGmailWorker } = require('./workers/gmail.worker');
+const { startBulkEmailWorker } = require('./workers/bulk-email.worker');
 
 process.on('uncaughtException', (err) => {
     logger.error('CRITICAL: Uncaught exception in LinkerIn backend', err);
@@ -37,6 +38,14 @@ async function startBackgroundWorkers() {
         });
     } else {
         logger.info('Gmail send worker disabled (set ENABLE_GMAIL_WORKER=true to enable)');
+    }
+
+    if (env.enableBulkEmailWorker) {
+        startBulkEmailWorker().catch((error) => {
+            logger.error('Unable to start bulk email worker', error);
+        });
+    } else {
+        logger.info('Bulk email worker disabled (set ENABLE_BULK_EMAIL_WORKER=true to enable)');
     }
 }
 

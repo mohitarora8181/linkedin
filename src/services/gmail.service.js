@@ -67,6 +67,46 @@ async function getConnection({ userId, email }) {
     return rows[0];
 }
 
+async function sendGmailMessage({ userId, email, recipients, subject, body }) {
+    if (!recipients?.length || recipients.some((recipient) => !validateEmail(recipient))) {
+        throw new HttpError(400, 'This email does not contain a valid recipient.');
+    }
+    if (!subject?.trim() || !body?.trim()) {
+        throw new HttpError(400, 'Email subject and body are required.');
+    }
+
+    const connection = await getConnection({ userId, email });
+    const oauthClient = new OAuth2Client(googleClientId, googleClientSecret, googleRedirectUri);
+    oauthClient.setCredentials({ refresh_token: decryptSecret(connection.encrypted_refresh_token) });
+
+    let accessToken;
+    try {
+        accessToken = (await oauthClient.getAccessToken()).token;
+    } catch {
+        throw new HttpError(401, 'Gmail authorization expired. Reconnect your Gmail account.');
+    }
+    if (!accessToken) {
+        throw new HttpError(401, 'Gmail authorization expired. Reconnect your Gmail account.');
+    }
+
+    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ raw: encodeBase64Url(buildMimeMessage({ body, recipients, subject })) })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+            throw new HttpError(401, 'Gmail authorization expired or does not include send permission.');
+        }
+        throw new HttpError(502, payload?.error?.message || 'Gmail could not send this message.');
+    }
+    return { messageId: payload.id, gmailEmail: connection.gmail_email };
+}
+
 async function sendItemEmail({ itemId, userId, email, auto = false }) {
     const item = await getItemForUser({ itemId, userId });
     if (auto) {
@@ -94,44 +134,14 @@ async function sendItemEmail({ itemId, userId, email, auto = false }) {
         throw new HttpError(400, 'This item does not contain a valid email recipient and draft.');
     }
 
-    const connection = await getConnection({ userId, email });
-    const oauthClient = new OAuth2Client(googleClientId, googleClientSecret, googleRedirectUri);
-    oauthClient.setCredentials({ refresh_token: decryptSecret(connection.encrypted_refresh_token) });
-
-    let accessToken;
-    try {
-        accessToken = (await oauthClient.getAccessToken()).token;
-    } catch {
-        throw new HttpError(401, 'Gmail authorization expired. Reconnect your Gmail account.');
-    }
-
-    if (!accessToken) {
-        throw new HttpError(401, 'Gmail authorization expired. Reconnect your Gmail account.');
-    }
-
-    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ raw: encodeBase64Url(buildMimeMessage({ body, recipients, subject })) })
-    });
-    const payload = await response.json().catch(() => null);
-
-    if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-            throw new HttpError(401, 'Gmail authorization expired or does not include send permission.');
-        }
-        throw new HttpError(502, payload?.error?.message || 'Gmail could not send this message.');
-    }
+    const result = await sendGmailMessage({ userId, email, recipients, subject, body });
 
     const updatedItem = await updateItem(itemId, {
         mail_sent: true,
         mail_send_status: 'sent',
         mail_send_error: null
     });
-    return { item: updatedItem, messageId: payload.id, gmailEmail: connection.gmail_email };
+    return { item: updatedItem, ...result };
 }
 
 async function queueItemEmail({ itemId, userId, email, auto = false }) {
@@ -264,4 +274,4 @@ async function getGmailConnectionStatus({ userId, email }) {
     };
 }
 
-module.exports = { buildMimeMessage, getGmailConnectionStatus, markGmailSendFailed, queueAutoEmailForItem, queueEligibleAutoEmails, queueEligibleAutoEmailsForEnabledUsers, queueItemEmail, sendItemEmail };
+module.exports = { buildMimeMessage, getGmailConnectionStatus, markGmailSendFailed, queueAutoEmailForItem, queueEligibleAutoEmails, queueEligibleAutoEmailsForEnabledUsers, queueItemEmail, sendGmailMessage, sendItemEmail };

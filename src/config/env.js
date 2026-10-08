@@ -10,6 +10,7 @@ const env = {
     rabbitMqQueue: process.env.RABBITMQ_QUEUE || 'linkerin.scrape.jobs',
     rabbitMqAiQueue: process.env.RABBITMQ_AI_QUEUE || 'groq_ai_parsing',
     rabbitMqGmailQueue: process.env.RABBITMQ_GMAIL_QUEUE || 'linkerin.gmail.send',
+    rabbitMqBulkEmailQueue: process.env.RABBITMQ_BULK_EMAIL_QUEUE || 'bulk_email_processor',
     rabbitMqUrl: process.env.RABBITMQ_URL,
     mysqlHost: process.env.MYSQL_HOST,
     mysqlPort: parseInt(process.env.MYSQL_PORT || '3306', 10),
@@ -31,9 +32,9 @@ const env = {
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
     scrapeConcurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10),
     enableScrapeWorker: !isServerless && process.env.ENABLE_SCRAPE_WORKER !== 'false',
-    enableAiWorker: !isServerless && process.env.ENABLE_AI_WORKER !== 'false'
-    ,
-    enableGmailWorker: !isServerless && process.env.ENABLE_GMAIL_WORKER !== 'false'
+    enableAiWorker: !isServerless && process.env.ENABLE_AI_WORKER !== 'false',
+    enableGmailWorker: !isServerless && process.env.ENABLE_GMAIL_WORKER !== 'false',
+    enableBulkEmailWorker: !isServerless && process.env.ENABLE_BULK_EMAIL_WORKER !== 'false'
 };
 
 function validateEnv() {

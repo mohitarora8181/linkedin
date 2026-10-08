@@ -1,4 +1,4 @@
-const { rabbitMqAiQueue, rabbitMqGmailQueue, rabbitMqQueue } = require('../config/env');
+const { rabbitMqAiQueue, rabbitMqBulkEmailQueue, rabbitMqGmailQueue, rabbitMqQueue } = require('../config/env');
 const { createChannel, rabbitMqExchange } = require('../config/rabbitmq');
 const logger = require('../utils/logger');
 
@@ -22,7 +22,10 @@ async function publishJob(queueName, job) {
         }
         logger.info(`Job published successfully to queue ${queueName}`, { itemId: job.itemId });
     } catch (err) {
-        logger.error(`Failed to publish job to queue ${queueName}`, err, { job });
+        logger.error(`Failed to publish job to queue ${queueName}`, err, {
+            itemId: job.itemId,
+            batchId: job.batchId
+        });
         throw err;
     } finally {
         if (channel) {
@@ -47,4 +50,8 @@ function publishGmailSendJob(job) {
     return publishJob(rabbitMqGmailQueue, job);
 }
 
-module.exports = { publishAiParsingJob, publishGmailSendJob, publishScrapeJob };
+function publishBulkEmailJob(job) {
+    return publishJob(rabbitMqBulkEmailQueue, job);
+}
+
+module.exports = { publishAiParsingJob, publishBulkEmailJob, publishGmailSendJob, publishScrapeJob };
