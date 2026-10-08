@@ -46,12 +46,14 @@ const schemaStatements = [
         user_id CHAR(36) NOT NULL UNIQUE,
         user_email VARCHAR(320) NOT NULL,
         resume_summary JSON NOT NULL,
+        public_resume_slug CHAR(36) NULL,
         resume_file_name TEXT NULL,
         resume_mime_type VARCHAR(255) NULL,
         auto_email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-        CONSTRAINT fk_linkerin_profiles_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE
+        CONSTRAINT fk_linkerin_profiles_user FOREIGN KEY (user_id) REFERENCES linkerin_users(id) ON DELETE CASCADE,
+        UNIQUE KEY linkerin_profiles_public_resume_slug_idx (public_resume_slug)
     )`,
     `CREATE TABLE IF NOT EXISTS linkerin_gmail_connections (
         id CHAR(36) PRIMARY KEY,
@@ -102,7 +104,8 @@ const columnMigrations = {
         mail_send_error: 'TEXT NULL'
     },
     linkerin_user_profiles: {
-        auto_email_enabled: 'BOOLEAN NOT NULL DEFAULT FALSE'
+        auto_email_enabled: 'BOOLEAN NOT NULL DEFAULT FALSE',
+        public_resume_slug: 'CHAR(36) NULL'
     },
     bulk_email_processor: {
         available_at: 'DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)'

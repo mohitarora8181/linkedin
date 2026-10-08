@@ -1,6 +1,6 @@
 const multer = require('multer');
 const { Router } = require('express');
-const { getResumeProfile, setAutoEmail, uploadResume } = require('../controllers/profile.controller');
+const { getPublicResume, getResumeProfile, setAutoEmail, uploadResume } = require('../controllers/profile.controller');
 const { requireUser } = require('../middleware/auth');
 
 const upload = multer({
@@ -10,6 +10,7 @@ const upload = multer({
 const router = Router();
 
 router.get('/profile/resume', requireUser, getResumeProfile);
+router.get('/profile/public-resume/:slug', getPublicResume);
 router.post('/profile/resume', requireUser, upload.single('resume'), uploadResume);
 router.patch('/profile/auto-email', requireUser, setAutoEmail);
 

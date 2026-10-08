@@ -3,7 +3,9 @@ const { getDatabase } = require('../config/database');
 const { mapItem, mapProfile, serializeJson } = require('../utils/database');
 const { HttpError } = require('../utils/http-error');
 const logger = require('../utils/logger');
+const { formatEmailBody } = require('../utils/email-format');
 const { queueAutoEmailForItem } = require('./gmail.service');
+const { getPublicResumeUrl } = require('./profile.service');
 
 function parseJsonFromText(text) {
     const cleaned = String(text || '')
@@ -28,10 +30,16 @@ async function getItem(itemId) {
     return data;
 }
 
-async function getResumeSummary(userId) {
-    const [rows] = await getDatabase().execute('SELECT resume_summary FROM linkerin_user_profiles WHERE user_id = ?', [userId]);
+async function getResumeProfile(userId) {
+    const [rows] = await getDatabase().execute(
+        'SELECT resume_summary, public_resume_slug FROM linkerin_user_profiles WHERE user_id = ?',
+        [userId]
+    );
     const data = mapProfile(rows[0]);
-    return data?.resume_summary ?? null;
+    return data ? {
+        summary: data.resume_summary,
+        publicResumeUrl: data.public_resume_slug ? getPublicResumeUrl(data.public_resume_slug) : null
+    } : null;
 }
 
 async function updateAiFields(itemId, values) {
@@ -217,7 +225,7 @@ function toBoundedJson(value, maxCharacters) {
     });
 }
 
-function buildPrompt({ item, resumeSummary, emailCandidates }) {
+function buildPrompt({ item, resumeSummary, emailCandidates, publicResumeUrl }) {
     const compactResume = compactValue(resumeSummary, { maxArrayLength: 6, maxObjectKeys: 18, maxStringLength: 900 });
     const compactContent = compactItemContent(item);
     const resumeJson = toBoundedJson(compactResume, 7500);
@@ -230,6 +238,7 @@ function buildPrompt({ item, resumeSummary, emailCandidates }) {
 Opportunity type: ${item.item_type === 'outreach' ? 'Pasted recruiter message' : item.item_type}
 Opportunity data: ${contentJson}
 Candidate resume: ${resumeJson}
+Public resume URL: ${publicResumeUrl || 'unavailable'}
 Email candidates found in the source: ${JSON.stringify(emailCandidates)}
 
 Rules:
@@ -253,18 +262,19 @@ Rules:
    - Avoid buzzword stacking, exaggerated claims, repetition, awkward phrases, generic filler, markdown, bullet points, and unexplained abbreviations.
    - Ensure grammar, punctuation, capitalization, paragraph breaks, greeting, closing, and candidate name are correct. Read the complete draft once for coherence before returning it.
 8. For an outreach item, create a polished, concise LinkedIn message that responds to the recruiter and the supplied opportunity. For other items, when a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; apply the same current-experience and honest-seniority rules; otherwise use null.
+9. When a public resume URL is supplied, include it exactly in every non-null email body and LinkedIn message draft, with a brief natural lead-in. Do not alter, shorten, or invent the URL.
 
 Return exactly this JSON shape:
 {"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;
 }
 
-async function callGroqForMail({ item, resumeSummary }) {
+async function callGroqForMail({ item, resumeSummary, publicResumeUrl }) {
     if (!groqApiKey) {
         throw new HttpError(500, 'Groq API key is not configured.');
     }
 
     const emailCandidates = collectEmailCandidates(item);
-    const prompt = buildPrompt({ item, resumeSummary, emailCandidates });
+    const prompt = buildPrompt({ item, resumeSummary, emailCandidates, publicResumeUrl });
     logger.info(`Sending request to Groq API for item ${item.id}`, { model: groqModel, promptCharacters: prompt.length, emailCandidates: emailCandidates.length });
     const requestBody = {
         model: groqModel,
@@ -304,8 +314,17 @@ async function callGroqForMail({ item, resumeSummary }) {
     const allowedEmails = new Set(emailCandidates.map((candidate) => candidate.email));
     const selectedEmails = Array.isArray(result.recruiter_emails) ? result.recruiter_emails : [];
 
+    const appendPublicResumeUrl = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return value;
+        const formatted = formatEmailBody(value);
+        if (!publicResumeUrl || formatted.includes(publicResumeUrl)) return formatted;
+        return formatEmailBody(`${formatted}\n\nMy public resume: ${publicResumeUrl}`);
+    };
+
     return {
         ...result,
+        message: appendPublicResumeUrl(result.message),
+        linkedin_message_draft: appendPublicResumeUrl(result.linkedin_message_draft),
         recruiter_emails: [...new Set(selectedEmails.map((email) => String(email).trim().toLowerCase()).filter((email) => allowedEmails.has(email)))]
     };
 }
@@ -317,12 +336,16 @@ async function processAiParsingJob({ itemId }) {
         throw new Error(`AI parsing skipped because item has no scraped content: ${itemId}`);
     }
 
-    const resumeSummary = await getResumeSummary(item.user_id);
-    if (!resumeSummary) {
+    const resumeProfile = await getResumeProfile(item.user_id);
+    if (!resumeProfile?.summary) {
         throw new Error('Resume profile is required before AI mail generation.');
     }
 
-    const result = await callGroqForMail({ item, resumeSummary });
+    const result = await callGroqForMail({
+        item,
+        resumeSummary: resumeProfile.summary,
+        publicResumeUrl: resumeProfile.publicResumeUrl
+    });
     const isJobRelated = item.item_type === 'outreach' || item.item_type === 'job' ? true : Boolean(result.is_job_related);
 
     // Normalize recruiter_emails — accept both old string and new array format from AI

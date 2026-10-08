@@ -1,4 +1,4 @@
-const { getResumeProfileForUser, saveResumeProfile, updateAutoEmailSetting } = require('../services/profile.service');
+const { getPublicResumeBySlug, getPublicResumeUrl, getResumeProfileForUser, saveResumeProfile, updateAutoEmailSetting } = require('../services/profile.service');
 const { getGmailConnectionStatus, queueEligibleAutoEmails } = require('../services/gmail.service');
 
 async function getResumeProfile(req, res, next) {
@@ -10,10 +10,21 @@ async function getResumeProfile(req, res, next) {
             hasResume: Boolean(profile?.resume_summary),
             autoEmailEnabled: Boolean(profile?.auto_email_enabled),
             gmail,
+            publicResumeUrl: profile?.public_resume_slug ? getPublicResumeUrl(profile.public_resume_slug) : null,
             profile
         });
     } catch (err) {
         next(err);
+    }
+}
+
+async function getPublicResume(req, res, next) {
+    try {
+        const resume = await getPublicResumeBySlug({ slug: req.params.slug });
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json({ success: true, ...resume });
+    } catch (err) {
+        return next(err);
     }
 }
 
@@ -23,6 +34,7 @@ async function uploadResume(req, res, next) {
         return res.status(201).json({
             success: true,
             hasResume: true,
+            publicResumeUrl: profile?.public_resume_slug ? getPublicResumeUrl(profile.public_resume_slug) : null,
             profile
         });
     } catch (err) {
@@ -45,4 +57,4 @@ async function setAutoEmail(req, res, next) {
     }
 }
 
-module.exports = { getResumeProfile, setAutoEmail, uploadResume };
+module.exports = { getPublicResume, getResumeProfile, setAutoEmail, uploadResume };

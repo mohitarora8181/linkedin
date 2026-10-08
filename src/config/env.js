@@ -5,7 +5,11 @@ const isServerless = Boolean(process.env.VERCEL);
 const env = {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: process.env.PORT || 3000,
-    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:8081,http://localhost:19006,http://localhost:3000').split(',').map((value) => value.trim().replace(/\/$/, '')).filter(Boolean),
+    corsAllowedOrigins: [...new Set([
+        ...(process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:8081,http://localhost:19006,http://localhost:3000').split(','),
+        'https://linkerin.toopsy.app'
+    ].map((value) => value.trim().replace(/\/$/, '')).filter(Boolean))],
+    publicWebUrl: (process.env.PUBLIC_WEB_URL || 'https://linkerin.toopsy.app').replace(/\/+$/, ''),
     rabbitMqExchange: process.env.RABBITMQ_EXCHANGE || 'linkerin.scrape',
     rabbitMqQueue: process.env.RABBITMQ_QUEUE || 'linkerin.scrape.jobs',
     rabbitMqAiQueue: process.env.RABBITMQ_AI_QUEUE || 'groq_ai_parsing',

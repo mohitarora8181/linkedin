@@ -2,12 +2,32 @@ const { getDatabase } = require('../config/database');
 const { summarizeResumeWithGemini } = require('./gemini.service');
 const { HttpError } = require('../utils/http-error');
 const { mapProfile, newId, serializeJson } = require('../utils/database');
+const { publicWebUrl } = require('../config/env');
 
 async function getResumeProfileForUser({ userId }) { const [rows] = await getDatabase().execute('SELECT * FROM linkerin_user_profiles WHERE user_id = ?', [userId]); return mapProfile(rows[0]); }
+async function getPublicResumeBySlug({ slug }) {
+    const [rows] = await getDatabase().execute(
+        `SELECT profiles.resume_summary, profiles.updated_at, users.name AS profile_name, users.picture_url AS profile_picture_url
+         FROM linkerin_user_profiles AS profiles
+         JOIN linkerin_users AS users ON users.id = profiles.user_id
+         WHERE profiles.public_resume_slug = ? LIMIT 1`,
+        [slug]
+    );
+    if (!rows[0]) throw new HttpError(404, 'This public resume could not be found.');
+    return {
+        resumeSummary: mapProfile(rows[0]).resume_summary,
+        updatedAt: rows[0].updated_at,
+        profileName: rows[0].profile_name,
+        profilePictureUrl: rows[0].profile_picture_url
+    };
+}
+function getPublicResumeUrl(slug) {
+    return `${publicWebUrl}/user/public/${encodeURIComponent(slug)}`;
+}
 async function saveResumeProfile({ file, user }) {
     if (!file) throw new HttpError(400, 'Resume file is required.');
     const resumeSummary = await summarizeResumeWithGemini(file);
-    await getDatabase().execute(`INSERT INTO linkerin_user_profiles (id, user_id, user_email, resume_summary, resume_file_name, resume_mime_type) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE user_email = VALUES(user_email), resume_summary = VALUES(resume_summary), resume_file_name = VALUES(resume_file_name), resume_mime_type = VALUES(resume_mime_type), updated_at = CURRENT_TIMESTAMP(3)`, [newId(), user.id, user.email, serializeJson(resumeSummary), file.originalname || null, file.mimetype || null]);
+    await getDatabase().execute(`INSERT INTO linkerin_user_profiles (id, user_id, user_email, resume_summary, public_resume_slug, resume_file_name, resume_mime_type) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE user_email = VALUES(user_email), resume_summary = VALUES(resume_summary), public_resume_slug = COALESCE(public_resume_slug, VALUES(public_resume_slug)), resume_file_name = VALUES(resume_file_name), resume_mime_type = VALUES(resume_mime_type), updated_at = CURRENT_TIMESTAMP(3)`, [newId(), user.id, user.email, serializeJson(resumeSummary), newId(), file.originalname || null, file.mimetype || null]);
     return getResumeProfileForUser({ userId: user.id });
 }
 
@@ -42,4 +62,4 @@ async function updateAutoEmailSetting({ enabled, userId }) {
     return enabled;
 }
 
-module.exports = { getResumeProfileForUser, saveResumeProfile, updateAutoEmailSetting };
+module.exports = { getPublicResumeBySlug, getPublicResumeUrl, getResumeProfileForUser, saveResumeProfile, updateAutoEmailSetting };

@@ -4,6 +4,7 @@ const { getDatabase } = require('../config/database');
 const { getItemForUser, updateItem } = require('./item.service');
 const { decryptSecret } = require('../utils/secret');
 const { HttpError } = require('../utils/http-error');
+const { formatEmailBody } = require('../utils/email-format');
 const { publishGmailSendJob } = require('./queue.service');
 const logger = require('../utils/logger');
 
@@ -38,6 +39,7 @@ function encodeMimeHeader(value) {
 }
 
 function buildMimeMessage({ body, recipients, subject }) {
+    const formattedBody = formatEmailBody(body);
     const lines = [
         `To: ${recipients.join(', ')}`,
         `Subject: ${encodeMimeHeader(subject.replace(/[\r\n]+/g, ' ').trim())}`,
@@ -45,7 +47,7 @@ function buildMimeMessage({ body, recipients, subject }) {
         'Content-Transfer-Encoding: 8bit',
         'MIME-Version: 1.0',
         '',
-        body
+        formattedBody
     ];
 
     return lines.join('\r\n');

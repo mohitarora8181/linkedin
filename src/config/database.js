@@ -80,6 +80,16 @@ async function initializeDatabase() {
                     }
                 }
             }
+
+            await database.query(
+                'UPDATE `linkerin_user_profiles` SET `public_resume_slug` = UUID() WHERE `public_resume_slug` IS NULL'
+            );
+            const [profileIndexes] = await database.query('SHOW INDEX FROM `linkerin_user_profiles`');
+            if (!profileIndexes.some((index) => index.Key_name === 'linkerin_profiles_public_resume_slug_idx')) {
+                await database.query(
+                    'CREATE UNIQUE INDEX `linkerin_profiles_public_resume_slug_idx` ON `linkerin_user_profiles` (`public_resume_slug`)'
+                );
+            }
         })().catch((error) => {
             initialization = null;
             throw error;
