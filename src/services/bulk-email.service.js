@@ -544,7 +544,7 @@ async function reserveRateLimitSlot(userId) {
             [userId]
         );
         const limit = rows[0];
-        if (Number(limit.sent_count) + Number(limit.in_flight_count) >= 500) {
+        if (Number(limit.sent_count) + Number(limit.in_flight_count) >= 469) {
             await connection.commit();
             return { allowed: false, reason: 'daily-limit' };
         }

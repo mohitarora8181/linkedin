@@ -16,6 +16,11 @@ const { HttpError } = require('../utils/http-error');
 const { encryptSecret } = require('../utils/secret');
 const { updateAutoEmailSetting } = require('../services/profile.service');
 const { queueEligibleAutoEmails } = require('../services/gmail.service');
+const { createAccessToken, createRefreshToken, verifyRefreshToken } = require('../services/session.service');
+
+const refreshCookieName = 'linkerin_refresh';
+const refreshCookiePath = '/auth/session';
+const refreshTokenLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 
 function client(redirectUri = googleRedirectUri) {
     return new OAuth2Client(googleClientId, googleClientSecret, redirectUri);
@@ -23,7 +28,37 @@ function client(redirectUri = googleRedirectUri) {
 
 function getCookie(req, name) {
     const match = (req.headers.cookie || '').split(';').map((value) => value.trim()).find((value) => value.startsWith(`${name}=`));
-    return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+    if (!match) return null;
+    try {
+        return decodeURIComponent(match.slice(name.length + 1));
+    } catch {
+        return null;
+    }
+}
+
+function setRefreshCookie(res, token) {
+    const secure = process.env.NODE_ENV === 'production';
+    res.cookie(refreshCookieName, token, {
+        httpOnly: true,
+        sameSite: secure ? 'none' : 'lax',
+        secure,
+        maxAge: refreshTokenLifetimeMs,
+        path: refreshCookiePath
+    });
+}
+
+function clearRefreshCookie(res) {
+    const secure = process.env.NODE_ENV === 'production';
+    res.clearCookie(refreshCookieName, {
+        httpOnly: true,
+        sameSite: secure ? 'none' : 'lax',
+        secure,
+        path: refreshCookiePath
+    });
+}
+
+function getRefreshToken(req) {
+    return getCookie(req, refreshCookieName) || req.body?.refreshToken || null;
 }
 
 function getAppCallbackUrl(value, callbackPath = '/auth/callback') {
@@ -80,13 +115,38 @@ async function googleCallback(req, res, next) {
             user = { id: newId(), email: profile.email, name: profile.name || null, picture_url: profile.picture || null };
             await db.execute('INSERT INTO linkerin_users (id, google_subject, email, name, picture_url) VALUES (?, ?, ?, ?, ?)', [user.id, profile.sub, user.email, user.name, user.picture_url]);
         }
-        const token = jwt.sign({ id: user.id, email: user.email, name: user.name, picture: user.picture_url }, jwtSecret, { expiresIn: '7d' });
+        const token = createAccessToken(user);
+        const refreshToken = createRefreshToken(user);
         const target = new URL(getAppCallbackUrl(state.returnTo));
         target.searchParams.set('token', token);
+        if (['http:', 'https:'].includes(target.protocol)) {
+            setRefreshCookie(res, refreshToken);
+        } else {
+            target.searchParams.set('refresh_token', refreshToken);
+        }
         return res.redirect(target.toString());
     } catch (error) {
         return next(error);
     }
+}
+
+function refreshSession(req, res) {
+    const token = getRefreshToken(req);
+    if (!token) return res.status(401).json({ success: false, message: 'Refresh token is required.' });
+
+    try {
+        const user = verifyRefreshToken(token);
+        if (!user.id || !user.email) throw new Error('Invalid refresh token payload');
+        return res.json({ success: true, accessToken: createAccessToken(user) });
+    } catch {
+        clearRefreshCookie(res);
+        return res.status(401).json({ success: false, message: 'Invalid or expired refresh token.' });
+    }
+}
+
+function revokeSession(req, res) {
+    clearRefreshCookie(res);
+    return res.json({ success: true });
 }
 
 async function startGmailAuthorization(req, res, next) {
@@ -153,4 +213,4 @@ async function gmailCallback(req, res, next) {
     }
 }
 
-module.exports = { gmailCallback, googleCallback, startGmailAuthorization, startGoogleLogin };
+module.exports = { gmailCallback, googleCallback, refreshSession, revokeSession, startGmailAuthorization, startGoogleLogin };
