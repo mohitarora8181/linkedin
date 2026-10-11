@@ -260,6 +260,7 @@ Email candidates found in the source: ${JSON.stringify(emailCandidates)}
 Phone number candidates found in the source: ${JSON.stringify(phoneCandidates)}
 
 Rules:
+0. Write every generated email, LinkedIn, and WhatsApp message draft strictly in the candidate's first-person voice, using "I", "me", and "my" as appropriate. Never describe or refer to the candidate in third person (for example, "the candidate has" or "[Name] has").
 1. For outreach items, always set is_job_related true. For LinkedIn job items, set it true. For LinkedIn posts, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
 2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email.
 3. Decide whether the author is the direct hiring contact. Mention that briefly in reason.
