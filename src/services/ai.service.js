@@ -215,6 +215,22 @@ function collectEmailCandidates(item) {
     return candidates.slice(0, 20);
 }
 
+function collectPhoneCandidates(item) {
+    const content = JSON.stringify(item.content || {});
+    const candidates = new Map();
+    const phonePattern = /(?<!\d)(?:\+|00)?\d(?:[\d(). -]*\d){6,14}(?!\d)/g;
+
+    for (const match of content.matchAll(phonePattern)) {
+        const phone = match[0].trim();
+        const digits = phone.replace(/\D/g, '');
+        if (digits.length >= 8 && digits.length <= 15 && !candidates.has(digits)) {
+            candidates.set(digits, phone);
+        }
+    }
+
+    return [...candidates.values()].slice(0, 20);
+}
+
 function toBoundedJson(value, maxCharacters) {
     const serialized = JSON.stringify(value);
     if (serialized.length <= maxCharacters) return serialized;
@@ -230,6 +246,7 @@ function buildPrompt({ item, resumeSummary, emailCandidates, publicResumeUrl }) 
     const compactContent = compactItemContent(item);
     const resumeJson = toBoundedJson(compactResume, 7500);
     const contentJson = toBoundedJson(compactContent, 11000);
+    const phoneCandidates = collectPhoneCandidates(item);
 
     return `${item.item_type === 'outreach'
         ? 'Generate a finished email draft and a LinkedIn outreach message in response to this pasted recruiter message.'
@@ -240,6 +257,7 @@ Opportunity data: ${contentJson}
 Candidate resume: ${resumeJson}
 Public resume URL: ${publicResumeUrl || 'unavailable'}
 Email candidates found in the source: ${JSON.stringify(emailCandidates)}
+Phone number candidates found in the source: ${JSON.stringify(phoneCandidates)}
 
 Rules:
 1. For outreach items, always set is_job_related true. For LinkedIn job items, set it true. For LinkedIn posts, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
@@ -262,10 +280,11 @@ Rules:
    - Avoid buzzword stacking, exaggerated claims, repetition, awkward phrases, generic filler, markdown, bullet points, and unexplained abbreviations.
    - Ensure grammar, punctuation, capitalization, paragraph breaks, greeting, closing, and candidate name are correct. Read the complete draft once for coherence before returning it.
 8. For an outreach item, create a polished, concise LinkedIn message that responds to the recruiter and the supplied opportunity. For other items, when a direct LinkedIn message/referral request is appropriate, create a polished 60-100 word message with greeting, fit, and concise request; apply the same current-experience and honest-seniority rules; otherwise use null.
-9. When a public resume URL is supplied, include it exactly in every non-null email body and LinkedIn message draft, with a brief natural lead-in. Do not alter, shorten, or invent the URL.
+9. Create a WhatsApp draft only when a phone number from the supplied phone number candidates is clearly a recruiter/contact number for this opportunity AND the content explicitly invites WhatsApp contact or the context strongly makes a direct WhatsApp message appropriate. Do not infer permission to message merely because a phone number appears. Never invent, reformat, or select a number that is not in the candidate list. When appropriate, write a concise, natural 30-60 word message specific to the opportunity and candidate; otherwise set both whatsapp_phone and whatsapp_message_draft to null.
+10. When a public resume URL is supplied, include it exactly in every non-null email, LinkedIn, and WhatsApp message draft, with a brief natural lead-in. Do not alter, shorten, or invent the URL.
 
 Return exactly this JSON shape:
-{"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","reason":"one concise sentence"}`;
+{"is_job_related":true,"recruiter_emails":["email@example.com"],"subject":"subject or null","message":"email body or null","linkedin_message_draft":"message or null","whatsapp_phone":"phone from the candidate list or null","whatsapp_message_draft":"message or null","reason":"one concise sentence"}`;
 }
 
 async function callGroqForMail({ item, resumeSummary, publicResumeUrl }) {
@@ -313,6 +332,10 @@ async function callGroqForMail({ item, resumeSummary, publicResumeUrl }) {
     const result = parseJsonFromText(payload?.choices?.[0]?.message?.content);
     const allowedEmails = new Set(emailCandidates.map((candidate) => candidate.email));
     const selectedEmails = Array.isArray(result.recruiter_emails) ? result.recruiter_emails : [];
+    const phoneCandidates = collectPhoneCandidates(item);
+    const phoneByDigits = new Map(phoneCandidates.map((phone) => [phone.replace(/\D/g, ''), phone]));
+    const selectedPhoneDigits = String(result.whatsapp_phone || '').replace(/\D/g, '');
+    const selectedPhone = phoneByDigits.get(selectedPhoneDigits) || null;
 
     const appendPublicResumeUrl = (value) => {
         if (typeof value !== 'string' || !value.trim()) return value;
@@ -325,6 +348,8 @@ async function callGroqForMail({ item, resumeSummary, publicResumeUrl }) {
         ...result,
         message: appendPublicResumeUrl(result.message),
         linkedin_message_draft: appendPublicResumeUrl(result.linkedin_message_draft),
+        whatsapp_phone: selectedPhone,
+        whatsapp_message_draft: selectedPhone ? appendPublicResumeUrl(result.whatsapp_message_draft) : null,
         recruiter_emails: [...new Set(selectedEmails.map((email) => String(email).trim().toLowerCase()).filter((email) => allowedEmails.has(email)))]
     };
 }
@@ -365,6 +390,8 @@ async function processAiParsingJob({ itemId }) {
             subject: result.subject || null,
             message: result.message || null,
             linkedin_message_draft: result.linkedin_message_draft || null,
+            whatsapp_phone: result.whatsapp_phone || null,
+            whatsapp_message_draft: result.whatsapp_message_draft || null,
             reason: result.reason || null
         } : null,
         linkedin_message_draft: isJobRelated ? (result.linkedin_message_draft || null) : null,
