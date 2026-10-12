@@ -81,6 +81,14 @@ async function initializeDatabase() {
                 }
             }
 
+            const [bulkEmailColumns] = await database.query('SHOW COLUMNS FROM `bulk_email_processor`');
+            const bulkEmailStatus = bulkEmailColumns.find((column) => column.Field === 'status');
+            if (bulkEmailStatus && (!bulkEmailStatus.Type.includes("'paused'") || !bulkEmailStatus.Type.includes("'pause_requested'"))) {
+                await database.query(
+                    "ALTER TABLE `bulk_email_processor` MODIFY COLUMN `status` ENUM('preparing', 'queued', 'sending', 'pause_requested', 'paused', 'sent', 'failed') NOT NULL DEFAULT 'preparing'"
+                );
+            }
+
             await database.query(
                 'UPDATE `linkerin_user_profiles` SET `public_resume_slug` = UUID() WHERE `public_resume_slug` IS NULL'
             );

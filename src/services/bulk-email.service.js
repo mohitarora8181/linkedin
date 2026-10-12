@@ -447,7 +447,9 @@ async function getBulkEmailBatches({ userId }) {
         `SELECT batch_id, MIN(created_at) AS created_at, COUNT(*) AS total_count,
          SUM(email_sent = TRUE) AS sent_count,
          SUM(status = 'preparing') AS preparing_count,
-         SUM(status IN ('queued', 'sending')) AS pending_count,
+         SUM(status IN ('queued', 'sending', 'pause_requested', 'paused')) AS pending_count,
+         SUM(status = 'paused') AS paused_count,
+         SUM(status = 'pause_requested') AS pausing_count,
          SUM(status = 'queued' AND available_at > CURRENT_TIMESTAMP(3)) AS scheduled_count,
          SUM(status = 'failed') AS failed_count
          FROM bulk_email_processor WHERE user_id = ?
@@ -461,9 +463,58 @@ async function getBulkEmailBatches({ userId }) {
         sentCount: Number(row.sent_count || 0),
         preparingCount: Number(row.preparing_count || 0),
         pendingCount: Number(row.pending_count || 0),
+        pausedCount: Number(row.paused_count || 0),
+        pausingCount: Number(row.pausing_count || 0),
         scheduledCount: Number(row.scheduled_count || 0),
         failedCount: Number(row.failed_count || 0)
     }));
+}
+
+async function setBulkEmailBatchPaused({ batchId, userId, paused }) {
+    const db = getDatabase();
+    const [result] = await db.execute(
+        paused
+            ? `UPDATE bulk_email_processor
+               SET status = CASE status
+                   WHEN 'queued' THEN 'paused'
+                   WHEN 'sending' THEN 'pause_requested'
+                   ELSE status
+               END
+               WHERE batch_id = ? AND user_id = ? AND status IN ('queued', 'sending')`
+            : `UPDATE bulk_email_processor
+               SET error_message = CASE WHEN status = 'paused' THEN NULL ELSE error_message END,
+               status = CASE status
+                   WHEN 'paused' THEN 'queued'
+                   WHEN 'pause_requested' THEN 'sending'
+                   ELSE status
+               END
+               WHERE batch_id = ? AND user_id = ? AND status IN ('paused', 'pause_requested')`,
+        [batchId, userId]
+    );
+
+    if (result.affectedRows === 0) {
+        const [rows] = await db.execute(
+            'SELECT 1 FROM bulk_email_processor WHERE batch_id = ? AND user_id = ? LIMIT 1',
+            [batchId, userId]
+        );
+        if (!rows.length) {
+            throw new HttpError(404, 'Bulk email batch not found.');
+        }
+    }
+
+    if (!paused && result.affectedRows > 0) {
+        try {
+            await publishBulkEmailJob({ action: 'process', batchId, userId });
+        } catch (error) {
+            logger.warn('Resumed bulk email batch will be picked up by the recovery scan', {
+                batchId,
+                userId,
+                error: error.message
+            });
+        }
+    }
+
+    return { batchId, paused };
 }
 
 function renderTemplate(template, values) {
@@ -596,7 +647,8 @@ async function sendBulkRow(row) {
         if (reservation.reason === 'daily-limit') {
             await getDatabase().execute(
                 `UPDATE bulk_email_processor
-                 SET status = 'queued', available_at = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY),
+                 SET available_at = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY),
+                     status = CASE WHEN status = 'pause_requested' THEN 'paused' ELSE 'queued' END,
                      error_message = 'Daily 500-email limit reached; processing will resume tomorrow.'
                  WHERE batch_id = ? AND user_id = ? AND (status = 'queued' OR id = ?)`,
                 [row.batch_id, row.user_id, row.id]
@@ -605,8 +657,8 @@ async function sendBulkRow(row) {
             await getDatabase().execute(
                 `UPDATE bulk_email_processor b
                  JOIN linkerin_email_send_limits l ON l.user_id = b.user_id
-                 SET b.status = 'queued',
-                     b.available_at = DATE_ADD(l.last_attempt_at, INTERVAL 30 SECOND),
+                 SET b.available_at = DATE_ADD(l.last_attempt_at, INTERVAL 30 SECOND),
+                     b.status = CASE WHEN b.status = 'pause_requested' THEN 'paused' ELSE 'queued' END,
                      b.error_message = 'Sending is rate limited; processing will resume shortly.'
                  WHERE b.batch_id = ? AND b.user_id = ? AND (b.status = 'queued' OR b.id = ?)`,
                 [row.batch_id, row.user_id, row.id]
@@ -628,7 +680,7 @@ async function sendBulkRow(row) {
         await getDatabase().execute(
             `UPDATE bulk_email_processor SET status = 'sent', email_sent = TRUE,
              email_sent_at = CURRENT_TIMESTAMP(3), error_message = NULL
-             WHERE id = ? AND status = 'sending'`,
+             WHERE id = ? AND status IN ('sending', 'pause_requested')`,
             [row.id]
         );
         return 'sent';
@@ -665,9 +717,10 @@ async function processBatch(job) {
                 });
                 await getDatabase().execute(
                     `UPDATE bulk_email_processor
-                     SET status = 'queued', available_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 1 MINUTE),
+                     SET available_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 1 MINUTE),
+                         status = CASE WHEN status = 'pause_requested' THEN 'paused' ELSE 'queued' END,
                          error_message = ?
-                     WHERE id = ? AND status = 'sending'`,
+                     WHERE id = ? AND status IN ('sending', 'pause_requested')`,
                     [String(error.message || 'Unable to verify recipient mail DNS.').slice(0, 1000), row.id]
                 );
                 return;
@@ -675,7 +728,7 @@ async function processBatch(job) {
             logger.error('Bulk email row failed', error, { batchId: job.batchId, rowId: row.id });
             await getDatabase().execute(
                 `UPDATE bulk_email_processor SET status = 'failed', error_message = ?
-                 WHERE id = ? AND status = 'sending'`,
+                 WHERE id = ? AND status IN ('sending', 'pause_requested')`,
                 [String(error.message || 'Bulk email could not be sent.').slice(0, 1000), row.id]
             );
         }
@@ -707,6 +760,7 @@ module.exports = {
     createBulkEmailBatch,
     generateEmailTemplate,
     getBulkEmailBatches,
+    setBulkEmailBatchPaused,
     prepareBatch,
     parseTemplateResponse,
     previewBulkEmailFile,

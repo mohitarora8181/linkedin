@@ -1,6 +1,6 @@
 const multer = require('multer');
 const { Router } = require('express');
-const { createBatch, listBatches, previewFile } = require('../controllers/bulk-email.controller');
+const { createBatch, listBatches, pauseBatch, previewFile, resumeBatch } = require('../controllers/bulk-email.controller');
 const { requireUser } = require('../middleware/auth');
 const { HttpError } = require('../utils/http-error');
 const logger = require('../utils/logger');
@@ -40,6 +40,8 @@ function uploadSpreadsheet(req, res, next) {
 }
 
 router.get('/bulk-email/batches', requireUser, listBatches);
+router.post('/bulk-email/batches/:batchId/pause', requireUser, pauseBatch);
+router.post('/bulk-email/batches/:batchId/resume', requireUser, resumeBatch);
 router.post('/bulk-email/preview', requireUser, uploadSpreadsheet, previewFile);
 router.post('/bulk-email/batches', requireUser, uploadSpreadsheet, createBatch);
 

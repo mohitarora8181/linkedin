@@ -1,7 +1,8 @@
 const {
     createBulkEmailBatch,
     getBulkEmailBatches,
-    previewBulkEmailFile
+    previewBulkEmailFile,
+    setBulkEmailBatchPaused
 } = require('../services/bulk-email.service');
 
 async function previewFile(req, res, next) {
@@ -41,4 +42,25 @@ async function listBatches(req, res, next) {
     }
 }
 
-module.exports = { createBatch, listBatches, previewFile };
+async function updateBatchPause(req, res, next, paused) {
+    try {
+        const result = await setBulkEmailBatchPaused({
+            batchId: req.params.batchId,
+            userId: req.user.id,
+            paused
+        });
+        return res.json({ success: true, ...result });
+    } catch (error) {
+        return next(error);
+    }
+}
+
+function pauseBatch(req, res, next) {
+    return updateBatchPause(req, res, next, true);
+}
+
+function resumeBatch(req, res, next) {
+    return updateBatchPause(req, res, next, false);
+}
+
+module.exports = { createBatch, listBatches, pauseBatch, previewFile, resumeBatch };

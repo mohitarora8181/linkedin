@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS bulk_email_processor (
     subject TEXT NULL,
     body_template MEDIUMTEXT NULL,
     column_values JSON NOT NULL,
-    status ENUM('preparing', 'queued', 'sending', 'sent', 'failed') NOT NULL DEFAULT 'preparing',
+    status ENUM('preparing', 'queued', 'sending', 'pause_requested', 'paused', 'sent', 'failed') NOT NULL DEFAULT 'preparing',
     error_message TEXT NULL,
     email_sent BOOLEAN NOT NULL DEFAULT FALSE,
     email_sent_at DATETIME(3) NULL,
