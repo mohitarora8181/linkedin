@@ -442,6 +442,113 @@ async function createBulkEmailBatch({ file, sheetName, user, columnMapping }) {
     };
 }
 
+async function createBulkEmailBatchFromDraft({ recipients, subject, body, sourceItemId, userId }) {
+    const uniqueRecipients = [...new Set(recipients.map((email) => String(email).trim().toLowerCase()))]
+        .filter((email) => EMAIL_PATTERN.test(email));
+    if (uniqueRecipients.length < 5 || !subject?.trim() || !body?.trim() || !sourceItemId) {
+        return null;
+    }
+
+    const [connections] = await getDatabase().execute(
+        'SELECT granted_scopes FROM linkerin_gmail_connections WHERE user_id = ?',
+        [userId]
+    );
+    const scopes = String(connections[0]?.granted_scopes || '').split(/\s+/);
+    if (!scopes.includes('https://www.googleapis.com/auth/gmail.send')) {
+        logger.info('LinkedIn post bulk email batch skipped because Gmail send permission is unavailable', {
+            userId,
+            recipientCount: uniqueRecipients.length
+        });
+        return null;
+    }
+
+    const [users] = await getDatabase().execute('SELECT email FROM linkerin_users WHERE id = ?', [userId]);
+    if (!users[0]?.email) {
+        logger.warn('LinkedIn post bulk email batch skipped because the user email is unavailable', { userId });
+        return null;
+    }
+
+    const batchId = sourceItemId;
+    const db = getDatabase();
+    const connection = await db.getConnection();
+    let queuedCount;
+    let recipientCount = uniqueRecipients.length;
+    let isNewBatch = false;
+    try {
+        await connection.beginTransaction();
+        const [sourceRows] = await connection.execute(
+            'SELECT id FROM linkerin_items WHERE id = ? AND user_id = ? FOR UPDATE',
+            [sourceItemId, userId]
+        );
+        if (!sourceRows.length) {
+            throw new HttpError(404, 'LinkedIn post not found for bulk email.');
+        }
+        const [existingRows] = await connection.execute(
+            'SELECT status FROM bulk_email_processor WHERE batch_id = ? AND user_id = ?',
+            [batchId, userId]
+        );
+        if (existingRows.length) {
+            queuedCount = existingRows.filter((row) => row.status === 'queued').length;
+            recipientCount = existingRows.length;
+        } else {
+            isNewBatch = true;
+            const chunkSize = 50;
+            for (let offset = 0; offset < uniqueRecipients.length; offset += chunkSize) {
+                const chunk = uniqueRecipients.slice(offset, offset + chunkSize);
+                const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+                const parameters = chunk.flatMap((recipient) => [
+                    newId(),
+                    batchId,
+                    userId,
+                    recipient,
+                    subject,
+                    body,
+                    JSON.stringify({}),
+                    'queued'
+                ]);
+                await connection.execute(
+                    `INSERT INTO bulk_email_processor
+                     (id, batch_id, user_id, email_to, subject, body_template, column_values, status)
+                     VALUES ${placeholders}`,
+                    parameters
+                );
+            }
+            queuedCount = uniqueRecipients.length;
+        }
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+
+    if (queuedCount > 0) {
+        try {
+            await publishBulkEmailJob({ action: 'process', batchId, userId });
+        } catch (error) {
+            logger.error('Unable to queue LinkedIn post bulk email batch', error, { batchId, userId });
+            if (isNewBatch) {
+                await db.execute(
+                    `UPDATE bulk_email_processor
+                     SET status = 'failed', error_message = 'Unable to queue bulk email processing.'
+                     WHERE batch_id = ? AND user_id = ? AND status = 'queued'`,
+                    [batchId, userId]
+                );
+                return { batchId, queuedCount: 0, failedCount: uniqueRecipients.length };
+            }
+            return { batchId, queuedCount, failedCount: 0 };
+        }
+    }
+
+    logger.info('Created or recovered bulk email batch from LinkedIn post', {
+        batchId,
+        userId,
+        recipientCount
+    });
+    return { batchId, queuedCount, failedCount: 0 };
+}
+
 async function getBulkEmailBatches({ userId }) {
     const [rows] = await getDatabase().execute(
         `SELECT batch_id, MIN(created_at) AS created_at, COUNT(*) AS total_count,
@@ -758,6 +865,7 @@ async function recoverBulkEmailBatches() {
 
 module.exports = {
     createBulkEmailBatch,
+    createBulkEmailBatchFromDraft,
     generateEmailTemplate,
     getBulkEmailBatches,
     setBulkEmailBatchPaused,

@@ -5,6 +5,7 @@ const { HttpError } = require('../utils/http-error');
 const logger = require('../utils/logger');
 const { formatEmailBody } = require('../utils/email-format');
 const { queueAutoEmailForItem } = require('./gmail.service');
+const { createBulkEmailBatchFromDraft } = require('./bulk-email.service');
 const { getPublicResumeUrl } = require('./profile.service');
 
 function parseJsonFromText(text) {
@@ -401,6 +402,22 @@ async function processAiParsingJob({ itemId }) {
         // Store as JSON array string so existing text column holds multiple emails
         recruiter_email: recruiterEmails ? JSON.stringify(recruiterEmails) : null
     });
+    if (
+        item.item_type === 'post' &&
+        isJobRelated &&
+        updatedItem.ai_mail?.subject &&
+        updatedItem.ai_mail?.message &&
+        recruiterEmails?.length >= 5
+    ) {
+        await createBulkEmailBatchFromDraft({
+            recipients: recruiterEmails,
+            subject: updatedItem.ai_mail.subject,
+            body: updatedItem.ai_mail.message,
+            userId: item.user_id
+        });
+        return getItem(item.id);
+    }
+
     if (item.item_type !== 'outreach' && isJobRelated && updatedItem.ai_mail?.subject && updatedItem.ai_mail?.message && recruiterEmails?.length) {
         await queueAutoEmailForItem({ itemId: item.id, userId: item.user_id });
         return getItem(item.id);
