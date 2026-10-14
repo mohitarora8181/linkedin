@@ -14,6 +14,9 @@ const { formatEmailBody } = require('../utils/email-format');
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_ROWS = 5000;
 const MAX_COLUMNS = 50;
+const DAILY_SEND_LIMIT = 250;
+const MIN_SEND_INTERVAL_SECONDS = 30;
+const MAX_SEND_INTERVAL_SECONDS = 60;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PLACEHOLDER_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const SOURCE_ROW_NUMBER = Symbol('sourceRowNumber');
@@ -27,6 +30,12 @@ function createRetryableDnsError(domain, cause) {
     error.retryable = true;
     return error;
 }
+
+function randomSendIntervalSeconds() {
+    return MIN_SEND_INTERVAL_SECONDS
+        + Math.floor(Math.random() * (MAX_SEND_INTERVAL_SECONDS - MIN_SEND_INTERVAL_SECONDS + 1));
+}
+
 const JSON_TEMPLATE_SCHEMA = {
     type: 'json_schema',
     json_schema: {
@@ -697,24 +706,25 @@ async function reserveRateLimitSlot(userId) {
             [userId]
         );
         const [rows] = await connection.execute(
-            `SELECT *, TIMESTAMPDIFF(MICROSECOND, last_attempt_at, CURRENT_TIMESTAMP(3)) AS elapsed_micros
+            `SELECT *, TIMESTAMPDIFF(MICROSECOND, CURRENT_TIMESTAMP(3), last_attempt_at) AS remaining_micros
              FROM linkerin_email_send_limits WHERE user_id = ? FOR UPDATE`,
             [userId]
         );
         const limit = rows[0];
-        if (Number(limit.sent_count) + Number(limit.in_flight_count) >= 469) {
+        if (Number(limit.sent_count) + Number(limit.in_flight_count) >= DAILY_SEND_LIMIT) {
             await connection.commit();
             return { allowed: false, reason: 'daily-limit' };
         }
-        if (limit.last_attempt_at && Number(limit.elapsed_micros) < 30_000_000) {
+        if (limit.last_attempt_at && Number(limit.remaining_micros) > 0) {
             await connection.commit();
             return { allowed: false, reason: 'interval' };
         }
         await connection.execute(
             `UPDATE linkerin_email_send_limits
-             SET last_attempt_at = CURRENT_TIMESTAMP(3), in_flight_count = in_flight_count + 1
+             SET last_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL ? SECOND),
+                 in_flight_count = in_flight_count + 1
              WHERE user_id = ?`,
-            [userId]
+            [randomSendIntervalSeconds(), userId]
         );
         await connection.commit();
         return { allowed: true };
@@ -756,7 +766,7 @@ async function sendBulkRow(row) {
                 `UPDATE bulk_email_processor
                  SET available_at = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY),
                      status = CASE WHEN status = 'pause_requested' THEN 'paused' ELSE 'queued' END,
-                     error_message = 'Daily 500-email limit reached; processing will resume tomorrow.'
+                     error_message = 'Daily 250-email limit reached; processing will resume tomorrow.'
                  WHERE batch_id = ? AND user_id = ? AND (status = 'queued' OR id = ?)`,
                 [row.batch_id, row.user_id, row.id]
             );
@@ -764,7 +774,7 @@ async function sendBulkRow(row) {
             await getDatabase().execute(
                 `UPDATE bulk_email_processor b
                  JOIN linkerin_email_send_limits l ON l.user_id = b.user_id
-                 SET b.available_at = DATE_ADD(l.last_attempt_at, INTERVAL 30 SECOND),
+                 SET b.available_at = l.last_attempt_at,
                      b.status = CASE WHEN b.status = 'pause_requested' THEN 'paused' ELSE 'queued' END,
                      b.error_message = 'Sending is rate limited; processing will resume shortly.'
                  WHERE b.batch_id = ? AND b.user_id = ? AND (b.status = 'queued' OR b.id = ?)`,
@@ -874,5 +884,7 @@ module.exports = {
     previewBulkEmailFile,
     processBatch,
     recoverBulkEmailBatches,
+    reserveRateLimitSlot,
+    randomSendIntervalSeconds,
     validateColumnMapping
 };
