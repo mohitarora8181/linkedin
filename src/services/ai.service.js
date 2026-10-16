@@ -8,6 +8,8 @@ const { queueAutoEmailForItem } = require('./gmail.service');
 const { createBulkEmailBatchFromDraft } = require('./bulk-email.service');
 const { getPublicResumeUrl } = require('./profile.service');
 
+const MAX_EMAIL_CANDIDATES_FOR_PROMPT = 100;
+
 function parseJsonFromText(text) {
     const cleaned = String(text || '')
         .replace(/^```json\s*/i, '')
@@ -213,7 +215,7 @@ function collectEmailCandidates(item) {
         collect(content.recruiter?.email, 'recruiter profile');
     }
 
-    return candidates.slice(0, 20);
+    return candidates;
 }
 
 function collectPhoneCandidates(item) {
@@ -257,13 +259,16 @@ Opportunity type: ${item.item_type === 'outreach' ? 'Pasted recruiter message' :
 Opportunity data: ${contentJson}
 Candidate resume: ${resumeJson}
 Public resume URL: ${publicResumeUrl || 'unavailable'}
-Email candidates found in the source: ${JSON.stringify(emailCandidates)}
+Email candidates found in the source: ${JSON.stringify(emailCandidates.slice(0, MAX_EMAIL_CANDIDATES_FOR_PROMPT))}
 Phone number candidates found in the source: ${JSON.stringify(phoneCandidates)}
+Bulk email trigger: ${item.item_type === 'post' && emailCandidates.length >= 5
+        ? 'This post contains at least five distinct source email addresses. Treat it as job-related and generate a usable email draft for a bulk email batch.'
+        : 'Not triggered.'}
 
 Rules:
 0. Write every generated email, LinkedIn, and WhatsApp message draft strictly in the candidate's first-person voice, using "I", "me", and "my" as appropriate. Never describe or refer to the candidate in third person (for example, "the candidate has" or "[Name] has").
-1. For outreach items, always set is_job_related true. For LinkedIn job items, set it true. For LinkedIn posts, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content.
-2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email.
+1. For outreach items, always set is_job_related true. For LinkedIn job items, set it true. For LinkedIn posts, set is_job_related true when it clearly contains hiring, a role, an application path, job hashtags, compensation, or an application email. Prefer true for borderline hiring content. Always set it true when the bulk email trigger above is active.
+2. Choose recruiter_emails only from Email candidates found in the source. Select only an email that is clearly a recruiter, hiring manager, company careers/HR inbox, job application contact, or explicitly named contact for this opportunity. Exclude the candidate's own email, unrelated business emails, newsletter/support addresses, and emails from commenters unless that commenter explicitly offers the role or asks for applications. If an author only shares another company's post, do not use the author's email unless they explicitly invite applications. Keep direct application/contact emails first. Return [] when no candidate is clearly suitable. Never guess or construct an email. When the bulk email trigger is active, recipient selection is handled deterministically from all distinct source emails, so do not omit addresses based on this relevance filter.
 3. Decide whether the author is the direct hiring contact. Mention that briefly in reason.
 4. Candidate profile accuracy is mandatory:
    - Every claim about the candidate's job title, employer, duration, achievement, project, technology, certification, education, contact detail, or seniority must be explicitly supported by the supplied resume. Do not infer, embellish, combine, or upgrade facts.
@@ -352,7 +357,8 @@ async function callGroqForMail({ item, resumeSummary, publicResumeUrl }) {
         linkedin_message_draft: appendPublicResumeUrl(result.linkedin_message_draft),
         whatsapp_phone: selectedPhone,
         whatsapp_message_draft: selectedPhone ? appendPublicResumeUrl(result.whatsapp_message_draft) : null,
-        recruiter_emails: [...new Set(selectedEmails.map((email) => String(email).trim().toLowerCase()).filter((email) => allowedEmails.has(email)))]
+        recruiter_emails: [...new Set(selectedEmails.map((email) => String(email).trim().toLowerCase()).filter((email) => allowedEmails.has(email)))],
+        source_email_candidates: emailCandidates.map((candidate) => candidate.email)
     };
 }
 
@@ -373,12 +379,17 @@ async function processAiParsingJob({ itemId }) {
         resumeSummary: resumeProfile.summary,
         publicResumeUrl: resumeProfile.publicResumeUrl
     });
-    const isJobRelated = item.item_type === 'outreach' || item.item_type === 'job' ? true : Boolean(result.is_job_related);
+    const hasBulkEmailRecipients = item.item_type === 'post' && result.source_email_candidates.length >= 5;
+    const isJobRelated = item.item_type === 'outreach' || item.item_type === 'job'
+        ? true
+        : hasBulkEmailRecipients || Boolean(result.is_job_related);
 
     // Normalize recruiter_emails — accept both old string and new array format from AI
     let recruiterEmails = null;
     if (isJobRelated) {
-        const raw = result.recruiter_emails ?? result.recruiter_email ?? null;
+        const raw = hasBulkEmailRecipients
+            ? result.source_email_candidates
+            : result.recruiter_emails ?? result.recruiter_email ?? null;
         if (Array.isArray(raw)) {
             recruiterEmails = raw.filter(Boolean).length > 0 ? raw.filter(Boolean) : null;
         } else if (typeof raw === 'string' && raw.trim()) {
@@ -394,7 +405,9 @@ async function processAiParsingJob({ itemId }) {
             linkedin_message_draft: result.linkedin_message_draft || null,
             whatsapp_phone: result.whatsapp_phone || null,
             whatsapp_message_draft: result.whatsapp_message_draft || null,
-            reason: result.reason || null
+            reason: hasBulkEmailRecipients
+                ? 'The post contains at least five distinct email addresses and is treated as a bulk email opportunity.'
+                : result.reason || null
         } : null,
         linkedin_message_draft: isJobRelated ? (result.linkedin_message_draft || null) : null,
         ai_status: 'completed',
@@ -404,7 +417,7 @@ async function processAiParsingJob({ itemId }) {
     });
     if (
         item.item_type === 'post' &&
-        isJobRelated &&
+        hasBulkEmailRecipients &&
         updatedItem.ai_mail?.subject &&
         updatedItem.ai_mail?.message &&
         recruiterEmails?.length >= 5
@@ -413,16 +426,24 @@ async function processAiParsingJob({ itemId }) {
             recipients: recruiterEmails,
             subject: updatedItem.ai_mail.subject,
             body: updatedItem.ai_mail.message,
+            sourceItemId: item.id,
             userId: item.user_id
         });
         return getItem(item.id);
     }
 
-    if (item.item_type !== 'outreach' && isJobRelated && updatedItem.ai_mail?.subject && updatedItem.ai_mail?.message && recruiterEmails?.length) {
+    if (
+        item.item_type !== 'outreach' &&
+        !hasBulkEmailRecipients &&
+        isJobRelated &&
+        updatedItem.ai_mail?.subject &&
+        updatedItem.ai_mail?.message &&
+        recruiterEmails?.length
+    ) {
         await queueAutoEmailForItem({ itemId: item.id, userId: item.user_id });
         return getItem(item.id);
     }
     return updatedItem;
 }
 
-module.exports = { markAiFailed, markAiQueued, processAiParsingJob };
+module.exports = { collectEmailCandidates, markAiFailed, markAiQueued, processAiParsingJob };
