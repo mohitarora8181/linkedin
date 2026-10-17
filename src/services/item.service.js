@@ -9,29 +9,40 @@ const logger = require('../utils/logger');
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 50;
+const ITEM_SELECT = `SELECT i.*,
+    EXISTS (
+        SELECT 1 FROM bulk_email_processor b
+        WHERE b.batch_id = i.id AND b.user_id = i.user_id
+    ) AS is_bulk_email,
+    (
+        SELECT b.batch_id FROM bulk_email_processor b
+        WHERE b.batch_id = i.id AND b.user_id = i.user_id
+        LIMIT 1
+    ) AS bulk_email_batch_id
+    FROM linkerin_items i`;
 
 function normalizeLimit(value) { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE; }
 function encodeCursor(item) { return item ? Buffer.from(JSON.stringify({ created_at: item.created_at, id: item.id })).toString('base64url') : null; }
 function decodeCursor(cursor) { try { const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); return value.created_at && value.id ? value : null; } catch { return null; } }
 function searchableFieldsForItem({ content, itemType }) { return itemType === 'post' ? [content?.author?.name ?? null, content?.content ?? null, null, null, null] : [null, null, content?.title ?? null, content?.company?.name ?? null, content?.location ?? null]; }
 
-async function getItemById(itemId) { const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ?', [itemId]); return mapItem(rows[0]); }
+async function getItemById(itemId) { const [rows] = await getDatabase().execute(`${ITEM_SELECT} WHERE i.id = ?`, [itemId]); return mapItem(rows[0]); }
 
 async function listItemsForUser({ cursor, limit: rawLimit, search, type, userId }) {
-    const limit = normalizeLimit(rawLimit); const decoded = decodeCursor(cursor); const where = ['user_id = ?']; const params = [userId];
-    if (type) { where.push('item_type = ?'); params.push(type); }
-    if (decoded) { where.push('(created_at < ? OR (created_at = ? AND id < ?))'); params.push(decoded.created_at, decoded.created_at, decoded.id); }
+    const limit = normalizeLimit(rawLimit); const decoded = decodeCursor(cursor); const where = ['i.user_id = ?']; const params = [userId];
+    if (type) { where.push('i.item_type = ?'); params.push(type); }
+    if (decoded) { where.push('(i.created_at < ? OR (i.created_at = ? AND i.id < ?))'); params.push(decoded.created_at, decoded.created_at, decoded.id); }
     const term = String(search || '').trim();
-    if (term && (type === 'post' || type === 'outreach')) { try { new RegExp(term); } catch { throw new HttpError(400, 'Post search must be a valid regular expression.'); } where.push('(author_name REGEXP ? OR post_content REGEXP ?)'); params.push(term, term); }
-    else if (term && type === 'job') { const escaped = term.replace(/[\\%_]/g, '\\$&'); where.push("(job_title LIKE ? ESCAPE '\\\\' OR company_name LIKE ? ESCAPE '\\\\' OR location LIKE ? ESCAPE '\\\\')"); params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`); }
+    if (term && (type === 'post' || type === 'outreach')) { try { new RegExp(term); } catch { throw new HttpError(400, 'Post search must be a valid regular expression.'); } where.push('(i.author_name REGEXP ? OR i.post_content REGEXP ?)'); params.push(term, term); }
+    else if (term && type === 'job') { const escaped = term.replace(/[\\%_]/g, '\\$&'); where.push("(i.job_title LIKE ? ESCAPE '\\\\' OR i.company_name LIKE ? ESCAPE '\\\\' OR i.location LIKE ? ESCAPE '\\\\')"); params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`); }
     params.push(limit + 1);
-    const [rows] = await getDatabase().query(`SELECT * FROM linkerin_items WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`, params);
+    const [rows] = await getDatabase().query(`${ITEM_SELECT} WHERE ${where.join(' AND ')} ORDER BY i.created_at DESC, i.id DESC LIMIT ?`, params);
     const items = rows.slice(0, limit).map(mapItem); const hasMore = rows.length > limit;
     return { items, hasMore, nextCursor: hasMore ? encodeCursor(items.at(-1)) : null };
 }
 
 async function findItemByUrl({ sourceUrl, userId }) { const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE user_id = ? AND source_url_hash = ?', [userId, hashSourceUrl(sourceUrl)]); return mapItem(rows[0]); }
-async function getItemForUser({ itemId, userId }) { const [rows] = await getDatabase().execute('SELECT * FROM linkerin_items WHERE id = ? AND user_id = ?', [itemId, userId]); const item = mapItem(rows[0]); if (!item) throw new HttpError(404, 'LinkerIn item not found'); return item; }
+async function getItemForUser({ itemId, userId }) { const [rows] = await getDatabase().execute(`${ITEM_SELECT} WHERE i.id = ? AND i.user_id = ?`, [itemId, userId]); const item = mapItem(rows[0]); if (!item) throw new HttpError(404, 'LinkerIn item not found'); return item; }
 async function updateItem(itemId, values) { const fields = Object.keys(values); await getDatabase().execute(`UPDATE linkerin_items SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ?`, [...fields.map((field) => values[field]), itemId]); return getItemById(itemId); }
 async function markItemFailed({ errorMessage, itemId }) { return updateItem(itemId, { is_pending: false, scrape_error: errorMessage }); }
 

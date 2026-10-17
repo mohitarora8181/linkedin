@@ -36,6 +36,27 @@ function randomSendIntervalSeconds() {
         + Math.floor(Math.random() * (MAX_SEND_INTERVAL_SECONDS - MIN_SEND_INTERVAL_SECONDS + 1));
 }
 
+function formatDateDDMMYYYY(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        throw new TypeError('Invalid bulk email batch creation date.');
+    }
+    return `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear()}`;
+}
+
+function toIsoTimestamp(value) {
+    if (value === null || value === undefined) return null;
+    const timestamp = String(value);
+    const normalizedTimestamp = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp)
+        ? timestamp
+        : `${timestamp.replace(' ', 'T')}Z`;
+    const date = value instanceof Date ? value : new Date(normalizedTimestamp);
+    if (Number.isNaN(date.getTime())) {
+        throw new TypeError('Invalid scheduled bulk email date.');
+    }
+    return date.toISOString();
+}
+
 const JSON_TEMPLATE_SCHEMA = {
     type: 'json_schema',
     json_schema: {
@@ -567,6 +588,7 @@ async function getBulkEmailBatches({ userId }) {
          SUM(status = 'paused') AS paused_count,
          SUM(status = 'pause_requested') AS pausing_count,
          SUM(status = 'queued' AND available_at > CURRENT_TIMESTAMP(3)) AS scheduled_count,
+         MIN(CASE WHEN status = 'queued' AND available_at > CURRENT_TIMESTAMP(3) THEN available_at END) AS scheduled_at,
          SUM(status = 'failed') AS failed_count
          FROM bulk_email_processor WHERE user_id = ?
          GROUP BY batch_id ORDER BY created_at DESC LIMIT 100`,
@@ -574,7 +596,7 @@ async function getBulkEmailBatches({ userId }) {
     );
     return rows.map((row) => ({
         batchId: row.batch_id,
-        createdAt: row.created_at,
+        createdAt: formatDateDDMMYYYY(row.created_at),
         totalCount: Number(row.total_count),
         sentCount: Number(row.sent_count || 0),
         preparingCount: Number(row.preparing_count || 0),
@@ -582,6 +604,7 @@ async function getBulkEmailBatches({ userId }) {
         pausedCount: Number(row.paused_count || 0),
         pausingCount: Number(row.pausing_count || 0),
         scheduledCount: Number(row.scheduled_count || 0),
+        scheduledAt: toIsoTimestamp(row.scheduled_at),
         failedCount: Number(row.failed_count || 0)
     }));
 }
@@ -876,12 +899,14 @@ async function recoverBulkEmailBatches() {
 module.exports = {
     createBulkEmailBatch,
     createBulkEmailBatchFromDraft,
+    formatDateDDMMYYYY,
     generateEmailTemplate,
     getBulkEmailBatches,
     setBulkEmailBatchPaused,
     prepareBatch,
     parseTemplateResponse,
     previewBulkEmailFile,
+    toIsoTimestamp,
     processBatch,
     recoverBulkEmailBatches,
     reserveRateLimitSlot,
