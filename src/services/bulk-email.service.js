@@ -21,6 +21,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PLACEHOLDER_PATTERN = /{{\s*([^{}]+?)\s*}}/g;
 const SOURCE_ROW_NUMBER = Symbol('sourceRowNumber');
 const NO_DNS_RECORD_CODES = new Set(['ENODATA', 'ENOTFOUND']);
+const DNS_SERVER_FAILURE_CODES = new Set(['ESERVFAIL']);
 const recipientMailRouteCache = new Map();
 const MAIL_ROUTE_CACHE_TTL_MS = 60_000;
 const MAIL_ROUTE_CACHE_MAX_ENTRIES = 1000;
@@ -670,7 +671,12 @@ async function hasRecipientMailRoute(domain) {
         const records = await dns.resolveMx(normalizedDomain);
         hasRoute = records.some((record) => record.exchange && record.exchange !== '.');
     } catch (error) {
-        if (!NO_DNS_RECORD_CODES.has(error.code)) {
+        if (DNS_SERVER_FAILURE_CODES.has(error.code)) {
+            logger.warn('Mail DNS lookup returned SERVFAIL; allowing Gmail to validate the recipient', {
+                domain: normalizedDomain
+            });
+            hasRoute = true;
+        } else if (!NO_DNS_RECORD_CODES.has(error.code)) {
             throw createRetryableDnsError(normalizedDomain, error);
         }
 
@@ -684,7 +690,14 @@ async function hasRecipientMailRoute(domain) {
                 (result) => result.status === 'rejected' && !NO_DNS_RECORD_CODES.has(result.reason?.code)
             );
             if (!hasRoute && lookupFailure) {
-                throw createRetryableDnsError(normalizedDomain, lookupFailure.reason);
+                if (DNS_SERVER_FAILURE_CODES.has(lookupFailure.reason?.code)) {
+                    logger.warn('Mail address DNS lookup returned SERVFAIL; allowing Gmail to validate the recipient', {
+                        domain: normalizedDomain
+                    });
+                    hasRoute = true;
+                } else {
+                    throw createRetryableDnsError(normalizedDomain, lookupFailure.reason);
+                }
             }
         }
     }
