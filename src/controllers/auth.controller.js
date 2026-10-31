@@ -61,7 +61,7 @@ function getRefreshToken(req) {
     return getCookie(req, refreshCookieName) || req.body?.refreshToken || null;
 }
 
-function getAppCallbackUrl(value, callbackPath = '/auth/callback') {
+function getAppCallbackUrl(value, callbackPath = '/auth/callback', allowedWebSuccessUrls = googleOauthWebSuccessUrls) {
     const fallback = new URL(
         callbackPath === '/auth/gmail-callback'
             ? 'linkerin://auth/gmail-callback'
@@ -73,10 +73,25 @@ function getAppCallbackUrl(value, callbackPath = '/auth/callback') {
         const requested = new URL(value);
         const mobilePath = callbackPath.replace(/^\/auth/, '') || '/callback';
         const isMobile = requested.protocol === 'linkerin:' && requested.hostname === 'auth' && requested.pathname === mobilePath;
+        const isChromeExtension = callbackPath === '/auth/callback'
+            && requested.protocol === 'https:'
+            && /^[a-p]{32}\.chromiumapp\.org$/.test(requested.hostname)
+            && requested.pathname === callbackPath;
         const isWeb = ['http:', 'https:'].includes(requested.protocol)
+            && !requested.username
+            && !requested.password
             && requested.pathname === callbackPath
-            && googleOauthWebSuccessUrls.includes(requested.toString().replace(/\/$/, ''));
-        return isMobile || isWeb ? requested.toString() : fallback.toString();
+            && allowedWebSuccessUrls.some((allowedValue) => {
+                try {
+                    const allowed = new URL(allowedValue);
+                    return allowed.protocol === requested.protocol
+                        && allowed.origin === requested.origin
+                        && allowed.pathname.replace(/\/+$/, '') === requested.pathname.replace(/\/+$/, '');
+                } catch {
+                    return false;
+                }
+            });
+        return isMobile || isChromeExtension || isWeb ? requested.toString() : fallback.toString();
     } catch {
         return fallback.toString();
     }
@@ -213,4 +228,4 @@ async function gmailCallback(req, res, next) {
     }
 }
 
-module.exports = { gmailCallback, googleCallback, refreshSession, revokeSession, startGmailAuthorization, startGoogleLogin };
+module.exports = { getAppCallbackUrl, gmailCallback, googleCallback, refreshSession, revokeSession, startGmailAuthorization, startGoogleLogin };
